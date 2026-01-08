@@ -1,0 +1,145 @@
+/* =========================
+   WishSystem - app.css
+   Put this file at: assets/css/app.css
+   ========================= */
+
+   :root{
+    --ws-bg:#f6f7fb;
+    --ws-card:#ffffff;
+    --ws-border:#e9ecef;
+    --ws-text:#212529;
+    --ws-muted:#6c757d;
+  }
+  
+  /* ---------- Global ---------- */
+  body{
+    background: var(--ws-bg);
+    color: var(--ws-text);
+  }
+  
+  .container.py-4{
+    min-height: calc(100vh - 120px);
+  }
+  
+  .ws-page-title{
+    font-weight: 900;
+    letter-spacing: .2px;
+    margin-bottom: 1rem;
+  }
+  
+  /* ---------- Navbar ---------- */
+  .navbar{
+    box-shadow: 0 6px 18px rgba(0,0,0,.10);
+  }
+  
+  .navbar-brand{
+    font-weight: 900;
+    letter-spacing: .2px;
+  }
+  
+  .navbar .nav-link{
+    opacity: .95;
+  }
+  .navbar .nav-link:hover{
+    opacity: 1;
+    text-decoration: underline;
+  }
+  
+  /* ---------- Cards ---------- */
+  .card{
+    border: 1px solid var(--ws-border);
+    border-radius: 16px;
+    background: var(--ws-card);
+    box-shadow: 0 8px 24px rgba(0,0,0,.06);
+  }
+  
+  .card-header{
+    background: rgba(0,0,0,.02);
+    border-bottom: 1px solid var(--ws-border);
+    font-weight: 700;
+  }
+  
+  /* KPI cards (dashboard) */
+  .ws-kpi{
+    border-radius: 16px;
+    border: 1px solid var(--ws-border);
+    background: linear-gradient(180deg, #ffffff, #fbfbff);
+    box-shadow: 0 8px 24px rgba(0,0,0,.06);
+  }
+  .ws-kpi .ws-kpi-label{
+    color: var(--ws-muted);
+    font-size: .9rem;
+  }
+  .ws-kpi .ws-kpi-value{
+    font-size: 1.65rem;
+    font-weight: 900;
+  }
+  
+  /* ---------- Tables ---------- */
+  .table{
+    background: #fff;
+  }
+  
+  .table thead th{
+    background: #f1f3f5;
+    border-bottom: 1px solid var(--ws-border) !important;
+    font-weight: 800;
+  }
+  
+  .table td, .table th{
+    vertical-align: middle;
+  }
+  
+  .table-hover tbody tr:hover{
+    background: rgba(13,110,253,.06);
+  }
+  
+  /* ---------- Forms ---------- */
+  .form-control, .form-select{
+    border-radius: 12px;
+    border-color: var(--ws-border);
+  }
+  
+  .form-control:focus, .form-select:focus{
+    box-shadow: 0 0 0 .2rem rgba(13,110,253,.15);
+    border-color: rgba(13,110,253,.35);
+  }
+  
+  .form-label{
+    font-weight: 700;
+  }
+  
+  /* ---------- Buttons ---------- */
+  .btn{
+    border-radius: 12px;
+    font-weight: 700;
+  }
+  
+  .btn-primary{
+    box-shadow: 0 10px 20px rgba(13,110,253,.18);
+  }
+  
+  /* ---------- Badges ---------- */
+  .badge{
+    border-radius: 999px;
+    padding: .45em .7em;
+  }
+  
+  /* ---------- Helpers ---------- */
+  .ws-muted{
+    color: var(--ws-muted) !important;
+  }
+  
+  /* Nice spacing for lists in detail pages */
+  .ws-detail-list li{
+    margin-bottom: .25rem;
+  }
+  
+  /* ---------- Optional: Better links ---------- */
+  a{
+    text-decoration: none;
+  }
+  a:hover{
+    text-decoration: underline;
+  }
+  
