@@ -1,5 +1,17 @@
 <?php
-require_once __DIR__ . "/auth_check.php"; // includes session + db
+require_once __DIR__ . "/auth_check.php";
+
+if (session_status() === PHP_SESSION_NONE) session_start();
+
+// CSRF
+function csrf_token(): string {
+    if (empty($_SESSION["csrf_token"])) $_SESSION["csrf_token"] = bin2hex(random_bytes(32));
+    return $_SESSION["csrf_token"];
+}
+function csrf_check(): bool {
+    $t = $_POST["csrf_token"] ?? "";
+    return $t && hash_equals($_SESSION["csrf_token"] ?? "", $t);
+}
 
 $title = "Change Password";
 require_once __DIR__ . "/header.php";
@@ -8,61 +20,74 @@ $error = "";
 $success = "";
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
-    $current = $_POST["current_password"] ?? "";
-    $new = $_POST["new_password"] ?? "";
-    $confirm = $_POST["confirm_password"] ?? "";
-
-    if ($new === "" || $current === "") {
-        $error = "Please fill in all fields.";
-    } elseif ($new !== $confirm) {
-        $error = "New passwords do not match.";
-    } elseif (strlen($new) < 6) {
-        $error = "New password must be at least 6 characters.";
+    if (!csrf_check()) {
+        $error = "Security check failed. Please refresh and try again.";
     } else {
-        $stmt = $conn->prepare("SELECT password FROM users WHERE user_id = :id LIMIT 1");
-        $stmt->execute(["id" => $_SESSION["user_id"]]);
-        $u = $stmt->fetch();
+        $current = $_POST["current_password"] ?? "";
+        $new = $_POST["new_password"] ?? "";
+        $confirm = $_POST["confirm_new_password"] ?? "";
 
-        if (!$u || !password_verify($current, $u["password"])) {
-            $error = "Current password is incorrect.";
+        if ($current === "" || $new === "" || $confirm === "") {
+            $error = "Please fill in all fields.";
+        } elseif ($new !== $confirm) {
+            $error = "New passwords do not match.";
+        } elseif (strlen($new) < 8) {
+            $error = "New password must be at least 8 characters.";
         } else {
-            $hash = password_hash($new, PASSWORD_DEFAULT);
-            $stmt = $conn->prepare("UPDATE users SET password = :p WHERE user_id = :id");
-            $stmt->execute(["p" => $hash, "id" => $_SESSION["user_id"]]);
-            $success = "Password updated successfully.";
+            $uid = (int)($_SESSION["user_id"] ?? 0);
+
+            $stmt = $conn->prepare("SELECT password FROM users WHERE user_id = :id LIMIT 1");
+            $stmt->execute([":id" => $uid]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$row || !password_verify($current, $row["password"])) {
+                $error = "Current password is incorrect.";
+            } else {
+                $hash = password_hash($new, PASSWORD_DEFAULT);
+                $stmt = $conn->prepare("UPDATE users SET password = :pw WHERE user_id = :id");
+                $stmt->execute([":pw" => $hash, ":id" => $uid]);
+
+                $success = "Password changed successfully.";
+                unset($_SESSION["csrf_token"]);
+            }
         }
     }
 }
 ?>
 
-<h3 class="ws-page-title mb-3">Change Password</h3>
+<h3 class="ws-page-title">Change Password</h3>
 
 <?php if ($error): ?>
   <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
 <?php endif; ?>
+
 <?php if ($success): ?>
   <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
 <?php endif; ?>
 
-<div class="card p-4">
-  <form method="post">
-    <div class="mb-3">
-      <label class="form-label">Current Password</label>
-      <input class="form-control" type="password" name="current_password" required>
-    </div>
+<div class="card" style="max-width:520px;">
+  <div class="card-body">
+    <form method="post" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
 
-    <div class="mb-3">
-      <label class="form-label">New Password</label>
-      <input class="form-control" type="password" name="new_password" required>
-    </div>
+      <div class="mb-3">
+        <label class="form-label">Current Password</label>
+        <input class="form-control" type="password" name="current_password" required>
+      </div>
 
-    <div class="mb-3">
-      <label class="form-label">Confirm New Password</label>
-      <input class="form-control" type="password" name="confirm_password" required>
-    </div>
+      <div class="mb-3">
+        <label class="form-label">New Password (min 8 chars)</label>
+        <input class="form-control" type="password" name="new_password" required>
+      </div>
 
-    <button class="btn btn-primary">Update Password</button>
-  </form>
+      <div class="mb-3">
+        <label class="form-label">Confirm New Password</label>
+        <input class="form-control" type="password" name="confirm_new_password" required>
+      </div>
+
+      <button class="btn btn-primary w-100">Update Password</button>
+    </form>
+  </div>
 </div>
 
 <?php require_once __DIR__ . "/footer.php"; ?>

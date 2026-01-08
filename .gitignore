@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+
+# Logs
+*.log
+
+# Local secrets
+config.php
+.env

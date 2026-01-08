@@ -1,80 +1,139 @@
 <?php
 require_once __DIR__ . "/auth_check.php";
-if ($_SESSION["role"] !== "admin") die("Access denied");
+if (($_SESSION["role"] ?? "") !== "admin") die("Access denied");
+
+if (session_status() === PHP_SESSION_NONE) session_start();
+
+// CSRF
+function csrf_token(): string {
+    if (empty($_SESSION["csrf_token"])) $_SESSION["csrf_token"] = bin2hex(random_bytes(32));
+    return $_SESSION["csrf_token"];
+}
+function csrf_check(): bool {
+    $t = $_POST["csrf_token"] ?? "";
+    return $t && hash_equals($_SESSION["csrf_token"] ?? "", $t);
+}
 
 $title = "User Management";
 require_once __DIR__ . "/header.php";
 
-// Handle actions
-if (isset($_GET["action"], $_GET["id"])) {
-    $id = (int)$_GET["id"];
-    if ($id !== $_SESSION["user_id"]) {
-        if ($_GET["action"] === "toggle") {
-            $conn->exec("
-              UPDATE users
-              SET status = IF(status='active','inactive','active')
-              WHERE user_id = $id
-            ");
+$me = (int)($_SESSION["user_id"] ?? 0);
+$msg = "";
+
+// Handle POST actions (secure)
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    if (!csrf_check()) {
+        $msg = "<div class='alert alert-danger'>Security check failed.</div>";
+    } else {
+        $action = $_POST["action"] ?? "";
+        $id = (int)($_POST["id"] ?? 0);
+
+        if ($id <= 0) {
+            $msg = "<div class='alert alert-danger'>Invalid user id.</div>";
+        } elseif ($id === $me) {
+            $msg = "<div class='alert alert-warning'>You cannot modify your own account.</div>";
+        } else {
+            if ($action === "toggle") {
+                // toggle active/inactive
+                $stmt = $conn->prepare("SELECT status FROM users WHERE user_id = :id LIMIT 1");
+                $stmt->execute([":id" => $id]);
+                $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if (!$row) {
+                    $msg = "<div class='alert alert-danger'>User not found.</div>";
+                } else {
+                    $newStatus = ($row["status"] === "active") ? "inactive" : "active";
+                    $stmt = $conn->prepare("UPDATE users SET status = :s WHERE user_id = :id");
+                    $stmt->execute([":s" => $newStatus, ":id" => $id]);
+                    $msg = "<div class='alert alert-success'>User status updated.</div>";
+                }
+
+            } elseif ($action === "promote") {
+                // promote to admin
+                $stmt = $conn->prepare("UPDATE users SET role = 'admin' WHERE user_id = :id AND role = 'online_posting'");
+                $stmt->execute([":id" => $id]);
+                $msg = "<div class='alert alert-success'>User promoted to admin (if eligible).</div>";
+            }
         }
-        if ($_GET["action"] === "promote") {
-            $conn->exec("
-              UPDATE users
-              SET role='admin'
-              WHERE user_id = $id AND role='online_posting'
-            ");
-        }
+
+        // rotate token after action
+        unset($_SESSION["csrf_token"]);
     }
-    header("Location: user.php");
-    exit;
 }
 
-$users = $conn->query("
-  SELECT user_id, name, email, role, status, created_at
-  FROM users
-  ORDER BY created_at DESC
-")->fetchAll();
+// list users
+$stmt = $conn->query("SELECT user_id, name, email, role, status, created_at FROM users ORDER BY created_at DESC");
+$users = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
-<h3 class="ws-page-title mb-3">User Management</h3>
+<h3 class="ws-page-title">User Management</h3>
+<?= $msg ?>
 
-<div class="card p-3">
-<table class="table table-hover">
-  <thead>
-    <tr>
-      <th>Name</th>
-      <th>Email</th>
-      <th>Role</th>
-      <th>Status</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
-    <?php foreach ($users as $u): ?>
-    <tr>
-      <td><?= htmlspecialchars($u["name"]) ?></td>
-      <td><?= htmlspecialchars($u["email"]) ?></td>
-      <td>
-        <span class="badge bg-<?= $u["role"]==="admin"?"dark":"secondary" ?>">
-          <?= $u["role"] ?>
-        </span>
-      </td>
-      <td>
-        <span class="badge bg-<?= $u["status"]==="active"?"success":"danger" ?>">
-          <?= $u["status"] ?>
-        </span>
-      </td>
-      <td>
-        <?php if ($u["user_id"] !== $_SESSION["user_id"]): ?>
-          <a class="btn btn-sm btn-outline-warning" href="?action=toggle&id=<?= $u["user_id"] ?>">Toggle</a>
-          <?php if ($u["role"]==="online_posting"): ?>
-            <a class="btn btn-sm btn-outline-primary" href="?action=promote&id=<?= $u["user_id"] ?>">Promote</a>
-          <?php endif; ?>
-        <?php endif; ?>
-      </td>
-    </tr>
-    <?php endforeach; ?>
-  </tbody>
-</table>
+<div class="card">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th class="text-end">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($users as $u): ?>
+            <?php
+              $uid = (int)$u["user_id"];
+              $isMe = ($uid === $me);
+            ?>
+            <tr>
+              <td class="fw-semibold"><?= htmlspecialchars($u["name"]) ?> <?= $isMe ? "<span class='badge bg-info'>You</span>" : "" ?></td>
+              <td><?= htmlspecialchars($u["email"]) ?></td>
+              <td><span class="badge <?= ($u["role"] === "admin") ? "bg-dark" : "bg-secondary" ?>"><?= htmlspecialchars($u["role"]) ?></span></td>
+              <td>
+                <span class="badge <?= ($u["status"] === "active") ? "bg-success" : "bg-warning text-dark" ?>">
+                  <?= htmlspecialchars($u["status"]) ?>
+                </span>
+              </td>
+              <td class="ws-muted small"><?= htmlspecialchars($u["created_at"]) ?></td>
+              <td class="text-end">
+                <?php if ($isMe): ?>
+                  <span class="ws-muted small">No action</span>
+                <?php else: ?>
+                  <div class="d-flex justify-content-end gap-2 flex-wrap">
+                    <form method="post" style="display:inline;">
+                      <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
+                      <input type="hidden" name="action" value="toggle">
+                      <input type="hidden" name="id" value="<?= $uid ?>">
+                      <button class="btn btn-sm btn-outline-primary"
+                        onclick="return confirm('Toggle this user status?');">
+                        Activate/Deactivate
+                      </button>
+                    </form>
+
+                    <?php if ($u["role"] === "online_posting"): ?>
+                      <form method="post" style="display:inline;">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
+                        <input type="hidden" name="action" value="promote">
+                        <input type="hidden" name="id" value="<?= $uid ?>">
+                        <button class="btn btn-sm btn-outline-success"
+                          onclick="return confirm('Promote this user to admin?');">
+                          Promote to Admin
+                        </button>
+                      </form>
+                    <?php endif; ?>
+                  </div>
+                <?php endif; ?>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <?php require_once __DIR__ . "/footer.php"; ?>
