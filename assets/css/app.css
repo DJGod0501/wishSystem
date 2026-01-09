@@ -143,3 +143,33 @@
     text-decoration: underline;
   }
   
+  /* ===== Interview Stage Colors ===== */
+.stage-new {
+    background-color: #adb5bd; /* gray */
+    color: #fff;
+}
+.stage-scheduled {
+    background-color: #0d6efd; /* blue */
+    color: #fff;
+}
+.stage-interviewed {
+    background-color: #fd7e14; /* orange */
+    color: #fff;
+}
+.stage-passed {
+    background-color: #198754; /* green */
+    color: #fff;
+}
+.stage-failed,
+.stage-no_show,
+.stage-withdrawn {
+    background-color: #dc3545; /* red */
+    color: #fff;
+}
+
+/* Calendar cell */
+.calendar-cell {
+    border-radius: 6px;
+    padding: 6px;
+    font-size: 0.85rem;
+}

@@ -1,65 +1,46 @@
 <?php
 require_once __DIR__ . "/db.php";
-
-if (session_status() === PHP_SESSION_NONE) session_start();
-
-// CSRF helpers
-function csrf_token(): string {
-    if (empty($_SESSION["csrf_token"])) {
-        $_SESSION["csrf_token"] = bin2hex(random_bytes(32));
-    }
-    return $_SESSION["csrf_token"];
-}
-function csrf_check(): bool {
-    $t = $_POST["csrf_token"] ?? "";
-    return $t && hash_equals($_SESSION["csrf_token"] ?? "", $t);
-}
+require_once __DIR__ . "/csrf.php";
 
 $error = "";
 $success = "";
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
-    if (!csrf_check()) {
-        $error = "Security check failed. Please refresh and try again.";
+    csrf_validate();
+
+    $name = trim($_POST["name"] ?? "");
+    $email = strtolower(trim($_POST["email"] ?? ""));
+    $password = $_POST["password"] ?? "";
+    $confirm = $_POST["confirm_password"] ?? "";
+
+    if ($name === "" || $email === "" || $password === "" || $confirm === "") {
+        $error = "Please fill in all fields.";
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $error = "Invalid email format.";
+    } elseif ($password !== $confirm) {
+        $error = "Passwords do not match.";
+    } elseif (strlen($password) < 8) {
+        $error = "Password must be at least 8 characters.";
     } else {
-        $name = trim($_POST["name"] ?? "");
-        $email = strtolower(trim($_POST["email"] ?? ""));
-        $password = $_POST["password"] ?? "";
-        $confirm = $_POST["confirm_password"] ?? "";
+        $stmt = $conn->prepare("SELECT user_id FROM users WHERE email = :email LIMIT 1");
+        $stmt->execute([":email" => $email]);
 
-        // basic validation
-        if ($name === "" || $email === "" || $password === "" || $confirm === "") {
-            $error = "Please fill in all fields.";
-        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $error = "Invalid email format.";
-        } elseif ($password !== $confirm) {
-            $error = "Passwords do not match.";
-        } elseif (strlen($password) < 8) {
-            $error = "Password must be at least 8 characters.";
+        if ($stmt->fetch()) {
+            $error = "Email already registered.";
         } else {
-            // prevent duplicate email
-            $stmt = $conn->prepare("SELECT user_id FROM users WHERE email = :email LIMIT 1");
-            $stmt->execute(["email" => $email]);
+            $hash = password_hash($password, PASSWORD_DEFAULT);
+            $stmt = $conn->prepare("
+                INSERT INTO users (name, email, password, role, status, created_at)
+                VALUES (:name, :email, :password, 'online_posting', 'active', NOW())
+            ");
+            $stmt->execute([
+                ":name" => $name,
+                ":email" => $email,
+                ":password" => $hash
+            ]);
 
-            if ($stmt->fetch()) {
-                $error = "Email already registered.";
-            } else {
-                $hash = password_hash($password, PASSWORD_DEFAULT);
-
-                $stmt = $conn->prepare("
-                    INSERT INTO users (name, email, password, role, status, created_at)
-                    VALUES (:name, :email, :password, 'online_posting', 'active', NOW())
-                ");
-                $stmt->execute([
-                    "name" => $name,
-                    "email" => $email,
-                    "password" => $hash
-                ]);
-
-                $success = "Registration successful. You can login now.";
-                // rotate token after successful action
-                unset($_SESSION["csrf_token"]);
-            }
+            csrf_rotate();
+            $success = "Registration successful. You can login now.";
         }
     }
 }

@@ -1,194 +1,118 @@
 <?php
-require_once 'auth_check.php';
-require_once 'db.php';
+// ===== FORCE ERROR DISPLAY (DEV ONLY) =====
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 
-// 仅 staff 可用（如果你 staff role 叫 online_posting）
-if (($_SESSION['role'] ?? '') !== 'online_posting') {
-    http_response_code(403);
-    exit('Forbidden');
+// ===== LOAD CORE =====
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth_check.php';
+
+// ===== FIX: map DB connection =====
+/*
+ * Your db.php does NOT define $pdo
+ * It defines $conn (confirmed by error)
+ * We normalize it here
+ */
+if (isset($conn) && !isset($pdo)) {
+    $pdo = $conn;
 }
 
-$userId = (int)($_SESSION['user_id'] ?? 0);
+if (!isset($pdo)) {
+    die('Database connection not found');
+}
 
-// 月份参数
-$year  = isset($_GET['y']) ? (int)$_GET['y'] : (int)date('Y');
-$month = isset($_GET['m']) ? (int)$_GET['m'] : (int)date('n');
-if ($year < 2000 || $year > 2100) $year = (int)date('Y');
-if ($month < 1 || $month > 12) $month = (int)date('n');
+// ===== AUTH CHECK =====
+if (!isset($_SESSION['user_id'])) {
+    die('No session');
+}
 
-$firstDay = sprintf('%04d-%02d-01', $year, $month);
-$daysInMonth = (int)date('t', strtotime($firstDay));
-$firstWeekday = (int)date('N', strtotime($firstDay)); // 1=Mon ... 7=Sun
+$userId = $_SESSION['user_id'];
 
-$prevTs = strtotime("$firstDay -1 month");
-$nextTs = strtotime("$firstDay +1 month");
+// ===== DATE =====
+$year  = isset($_GET['year']) ? (int)$_GET['year'] : (int)date('Y');
+$month = isset($_GET['month']) ? (int)$_GET['month'] : (int)date('m');
 
-// 抓取本月：按 interview_date 统计数量 + stage breakdown
-$sql = "
-SELECT 
-  interview_date,
-  interview_stage,
-  COUNT(*) AS cnt
-FROM interview_forms
-WHERE user_id = :uid
-  AND interview_date IS NOT NULL
-  AND interview_date >= :start
-  AND interview_date <  :end
-GROUP BY interview_date, interview_stage
-";
-$start = $firstDay;
-$end = date('Y-m-d', strtotime("$firstDay +1 month"));
+$start = sprintf('%04d-%02d-01', $year, $month);
+$end   = (new DateTime($start))->modify('+1 month')->format('Y-m-d');
 
-$stmt = $pdo->prepare($sql);
+// ===== QUERY =====
+$stmt = $pdo->prepare("
+    SELECT 
+        COALESCE(interview_date, DATE(created_at)) AS day,
+        interview_stage,
+        COUNT(*) AS total
+    FROM interview_forms
+    WHERE user_id = :uid
+      AND COALESCE(interview_date, DATE(created_at)) >= :start
+      AND COALESCE(interview_date, DATE(created_at)) < :end
+    GROUP BY day, interview_stage
+");
 $stmt->execute([
-  ':uid' => $userId,
-  ':start' => $start,
-  ':end' => $end
+    ':uid'   => $userId,
+    ':start'=> $start,
+    ':end'  => $end
 ]);
 
-$map = []; // date => ['total'=>x, 'stages'=>['new'=>1...]]
+$data = [];
 while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-    $d = $row['interview_date'];
-    $stage = $row['interview_stage'];
-    $cnt = (int)$row['cnt'];
-
-    if (!isset($map[$d])) $map[$d] = ['total' => 0, 'stages' => []];
-    $map[$d]['total'] += $cnt;
-    $map[$d]['stages'][$stage] = ($map[$d]['stages'][$stage] ?? 0) + $cnt;
+    $data[$row['day']][] = $row;
 }
 
-function stage_badge_class(string $stage): string {
-    return match($stage) {
-        'new' => 'bg-secondary',
-        'scheduled' => 'bg-primary',
-        'interviewed' => 'bg-info',
-        'passed' => 'bg-success',
-        'failed' => 'bg-danger',
-        'no_show' => 'bg-warning text-dark',
-        'withdrawn' => 'bg-dark',
-        default => 'bg-secondary',
-    };
-}
+// ===== CALENDAR META =====
+$first = new DateTime($start);
+$daysInMonth  = (int)$first->format('t');
+$startWeekday = (int)$first->format('N');
 
-// 用于日历格子主色：按优先级挑一个 stage 代表当天“最重要状态”
-function pick_main_stage(array $stages): string {
-    $priority = ['failed','no_show','withdrawn','passed','interviewed','scheduled','new'];
-    foreach ($priority as $s) {
-        if (!empty($stages[$s])) return $s;
-    }
-    return 'new';
-}
-
-require_once 'header.php';
+// ===== HEADER =====
+include 'header.php';
 ?>
 
-<div class="container py-4">
-  <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
-    <div>
-      <h4 class="mb-1">My Interview Calendar</h4>
-      <div class="text-muted small">Shows your submitted candidates by interview date & stage.</div>
-    </div>
+<h4>My Interview Calendar</h4>
 
-    <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary"
-         href="my_calendar.php?y=<?= (int)date('Y',$prevTs) ?>&m=<?= (int)date('n',$prevTs) ?>">
-        ◀ Prev
-      </a>
-      <a class="btn btn-outline-secondary" href="my_calendar.php">This Month</a>
-      <a class="btn btn-outline-secondary"
-         href="my_calendar.php?y=<?= (int)date('Y',$nextTs) ?>&m=<?= (int)date('n',$nextTs) ?>">
-        Next ▶
-      </a>
-    </div>
-  </div>
+<table class="table table-bordered text-center">
+<tr>
+<th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th>
+</tr>
+<tr>
 
-  <div class="card shadow-sm">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <strong><?= htmlspecialchars(date('F Y', strtotime($firstDay))) ?></strong>
-      <div class="d-flex flex-wrap gap-2 small">
-        <span class="badge bg-secondary">New</span>
-        <span class="badge bg-primary">Scheduled</span>
-        <span class="badge bg-info">Interviewed</span>
-        <span class="badge bg-success">Passed</span>
-        <span class="badge bg-danger">Failed</span>
-        <span class="badge bg-warning text-dark">No-show</span>
-        <span class="badge bg-dark">Withdrawn</span>
-      </div>
-    </div>
+<?php
+$cell = 1;
 
-    <div class="card-body p-2">
-      <div class="row g-2 text-center fw-semibold small mb-2">
-        <div class="col">Mon</div><div class="col">Tue</div><div class="col">Wed</div><div class="col">Thu</div><div class="col">Fri</div><div class="col">Sat</div><div class="col">Sun</div>
-      </div>
+// empty cells
+for ($i = 1; $i < $startWeekday; $i++, $cell++) {
+    echo '<td></td>';
+}
 
-      <?php
-      $day = 1;
-      $cell = 1;
+// days
+for ($day = 1; $day <= $daysInMonth; $day++, $cell++) {
 
-      // 总格子数：至少 6 行 * 7 列更稳定
-      $totalCells = 42;
+    $date = sprintf('%04d-%02d-%02d', $year, $month, $day);
 
-      for ($i=0; $i < $totalCells; $i++) {
-          if ($i % 7 == 0) echo '<div class="row g-2 mb-2">';
+    echo '<td valign="top">';
+    echo "<strong>
+            <a href='my_calander_day.php?day={$date}'>
+                {$day}
+            </a>
+          </strong>";
 
-          $content = '';
-          $isCurrentMonth = false;
+    if (!empty($data[$date])) {
+        foreach ($data[$date] as $r) {
+            echo "<div class='calendar-cell stage-{$r['interview_stage']} mt-1'>
+                    {$r['interview_stage']} ({$r['total']})
+                  </div>";
+        }
+    }
 
-          if ($i >= ($firstWeekday - 1) && $day <= $daysInMonth) {
-              $isCurrentMonth = true;
-              $dateStr = sprintf('%04d-%02d-%02d', $year, $month, $day);
+    echo '</td>';
 
-              $info = $map[$dateStr] ?? null;
-              $total = $info['total'] ?? 0;
-              $stages = $info['stages'] ?? [];
+    if ($cell % 7 === 0) {
+        echo '</tr><tr>';
+    }
+}
+?>
 
-              $mainStage = $total > 0 ? pick_main_stage($stages) : 'new';
-              $badgeClass = $total > 0 ? stage_badge_class($mainStage) : 'bg-light text-dark';
+</tr>
+</table>
 
-              $content .= '<div class="d-flex justify-content-between align-items-start">';
-              $content .= '<div class="fw-bold">'. $day .'</div>';
-
-              if ($total > 0) {
-                  $content .= '<span class="badge '.$badgeClass.'">'. $total .'</span>';
-              } else {
-                  $content .= '<span class="text-muted small"> </span>';
-              }
-              $content .= '</div>';
-
-              if ($total > 0) {
-                  // 小型 stage 分布
-                  $mini = [];
-                  foreach (['new','scheduled','interviewed','passed','failed','no_show','withdrawn'] as $s) {
-                      if (!empty($stages[$s])) {
-                          $mini[] = '<span class="badge '.stage_badge_class($s).' me-1 mb-1">'.(int)$stages[$s].'</span>';
-                      }
-                  }
-                  $content .= '<div class="mt-2 small">'.implode('', $mini).'</div>';
-
-                  // 点击去当天列表
-                  $content = '<a class="text-decoration-none text-dark" href="my_calendar_day.php?date='.urlencode($dateStr).'">'.$content.'</a>';
-              }
-              $day++;
-          }
-
-          $cellClasses = 'col';
-          $boxClasses = 'border rounded p-2 h-100';
-          if (!$isCurrentMonth) {
-              $boxClasses .= ' bg-light';
-              $content = '&nbsp;';
-          }
-
-          echo '<div class="'.$cellClasses.'"><div class="'.$boxClasses.'" style="min-height:96px;">'.$content.'</div></div>';
-
-          if ($i % 7 == 6) echo '</div>';
-      }
-      ?>
-    </div>
-  </div>
-
-  <div class="text-muted small mt-3">
-    Tip: Only forms with <code>interview_date</code> will appear here. Admin can set interview date/stage in the detail page (next enhancement).
-  </div>
-</div>
-
-<?php require_once 'footer.php'; ?>
+<?php include 'footer.php'; ?>

@@ -1,17 +1,6 @@
 <?php
 require_once __DIR__ . "/auth_check.php";
-
-if (session_status() === PHP_SESSION_NONE) session_start();
-
-// CSRF
-function csrf_token(): string {
-    if (empty($_SESSION["csrf_token"])) $_SESSION["csrf_token"] = bin2hex(random_bytes(32));
-    return $_SESSION["csrf_token"];
-}
-function csrf_check(): bool {
-    $t = $_POST["csrf_token"] ?? "";
-    return $t && hash_equals($_SESSION["csrf_token"] ?? "", $t);
-}
+require_once __DIR__ . "/csrf.php";
 
 $title = "Change Password";
 require_once __DIR__ . "/header.php";
@@ -20,36 +9,34 @@ $error = "";
 $success = "";
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
-    if (!csrf_check()) {
-        $error = "Security check failed. Please refresh and try again.";
+    csrf_validate();
+
+    $current = $_POST["current_password"] ?? "";
+    $new = $_POST["new_password"] ?? "";
+    $confirm = $_POST["confirm_new_password"] ?? "";
+
+    if ($current === "" || $new === "" || $confirm === "") {
+        $error = "Please fill in all fields.";
+    } elseif ($new !== $confirm) {
+        $error = "New passwords do not match.";
+    } elseif (strlen($new) < 8) {
+        $error = "New password must be at least 8 characters.";
     } else {
-        $current = $_POST["current_password"] ?? "";
-        $new = $_POST["new_password"] ?? "";
-        $confirm = $_POST["confirm_new_password"] ?? "";
+        $uid = (int)($_SESSION["user_id"] ?? 0);
 
-        if ($current === "" || $new === "" || $confirm === "") {
-            $error = "Please fill in all fields.";
-        } elseif ($new !== $confirm) {
-            $error = "New passwords do not match.";
-        } elseif (strlen($new) < 8) {
-            $error = "New password must be at least 8 characters.";
+        $stmt = $conn->prepare("SELECT password FROM users WHERE user_id = :id LIMIT 1");
+        $stmt->execute([":id" => $uid]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$row || !password_verify($current, $row["password"])) {
+            $error = "Current password is incorrect.";
         } else {
-            $uid = (int)($_SESSION["user_id"] ?? 0);
+            $hash = password_hash($new, PASSWORD_DEFAULT);
+            $stmt = $conn->prepare("UPDATE users SET password = :pw WHERE user_id = :id");
+            $stmt->execute([":pw" => $hash, ":id" => $uid]);
 
-            $stmt = $conn->prepare("SELECT password FROM users WHERE user_id = :id LIMIT 1");
-            $stmt->execute([":id" => $uid]);
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-            if (!$row || !password_verify($current, $row["password"])) {
-                $error = "Current password is incorrect.";
-            } else {
-                $hash = password_hash($new, PASSWORD_DEFAULT);
-                $stmt = $conn->prepare("UPDATE users SET password = :pw WHERE user_id = :id");
-                $stmt->execute([":pw" => $hash, ":id" => $uid]);
-
-                $success = "Password changed successfully.";
-                unset($_SESSION["csrf_token"]);
-            }
+            csrf_rotate();
+            $success = "Password changed successfully.";
         }
     }
 }

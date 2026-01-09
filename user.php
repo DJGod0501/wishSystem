@@ -1,18 +1,8 @@
 <?php
 require_once __DIR__ . "/auth_check.php";
+require_once __DIR__ . "/csrf.php";
+
 if (($_SESSION["role"] ?? "") !== "admin") die("Access denied");
-
-if (session_status() === PHP_SESSION_NONE) session_start();
-
-// CSRF
-function csrf_token(): string {
-    if (empty($_SESSION["csrf_token"])) $_SESSION["csrf_token"] = bin2hex(random_bytes(32));
-    return $_SESSION["csrf_token"];
-}
-function csrf_check(): bool {
-    $t = $_POST["csrf_token"] ?? "";
-    return $t && hash_equals($_SESSION["csrf_token"] ?? "", $t);
-}
 
 $title = "User Management";
 require_once __DIR__ . "/header.php";
@@ -20,45 +10,41 @@ require_once __DIR__ . "/header.php";
 $me = (int)($_SESSION["user_id"] ?? 0);
 $msg = "";
 
-// Handle POST actions (secure)
+// Actions
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
-    if (!csrf_check()) {
-        $msg = "<div class='alert alert-danger'>Security check failed.</div>";
+    csrf_validate();
+
+    $action = $_POST["action"] ?? "";
+    $id = (int)($_POST["id"] ?? 0);
+
+    if ($id <= 0) {
+        $msg = "<div class='alert alert-danger'>Invalid user id.</div>";
+    } elseif ($id === $me) {
+        $msg = "<div class='alert alert-warning'>You cannot modify your own account.</div>";
     } else {
-        $action = $_POST["action"] ?? "";
-        $id = (int)($_POST["id"] ?? 0);
+        if ($action === "toggle") {
+            $stmt = $conn->prepare("SELECT status FROM users WHERE user_id = :id LIMIT 1");
+            $stmt->execute([":id" => $id]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if ($id <= 0) {
-            $msg = "<div class='alert alert-danger'>Invalid user id.</div>";
-        } elseif ($id === $me) {
-            $msg = "<div class='alert alert-warning'>You cannot modify your own account.</div>";
-        } else {
-            if ($action === "toggle") {
-                // toggle active/inactive
-                $stmt = $conn->prepare("SELECT status FROM users WHERE user_id = :id LIMIT 1");
-                $stmt->execute([":id" => $id]);
-                $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-                if (!$row) {
-                    $msg = "<div class='alert alert-danger'>User not found.</div>";
-                } else {
-                    $newStatus = ($row["status"] === "active") ? "inactive" : "active";
-                    $stmt = $conn->prepare("UPDATE users SET status = :s WHERE user_id = :id");
-                    $stmt->execute([":s" => $newStatus, ":id" => $id]);
-                    $msg = "<div class='alert alert-success'>User status updated.</div>";
-                }
-
-            } elseif ($action === "promote") {
-                // promote to admin
-                $stmt = $conn->prepare("UPDATE users SET role = 'admin' WHERE user_id = :id AND role = 'online_posting'");
-                $stmt->execute([":id" => $id]);
-                $msg = "<div class='alert alert-success'>User promoted to admin (if eligible).</div>";
+            if (!$row) {
+                $msg = "<div class='alert alert-danger'>User not found.</div>";
+            } else {
+                $newStatus = ($row["status"] === "active") ? "inactive" : "active";
+                $stmt = $conn->prepare("UPDATE users SET status = :s WHERE user_id = :id");
+                $stmt->execute([":s" => $newStatus, ":id" => $id]);
+                $msg = "<div class='alert alert-success'>User status updated.</div>";
             }
         }
 
-        // rotate token after action
-        unset($_SESSION["csrf_token"]);
+        if ($action === "promote") {
+            $stmt = $conn->prepare("UPDATE users SET role='admin' WHERE user_id = :id AND role='online_posting'");
+            $stmt->execute([":id" => $id]);
+            $msg = "<div class='alert alert-success'>User promoted to admin (if eligible).</div>";
+        }
     }
+
+    csrf_rotate();
 }
 
 // list users
@@ -85,10 +71,7 @@ $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </thead>
         <tbody>
           <?php foreach ($users as $u): ?>
-            <?php
-              $uid = (int)$u["user_id"];
-              $isMe = ($uid === $me);
-            ?>
+            <?php $uid = (int)$u["user_id"]; $isMe = ($uid === $me); ?>
             <tr>
               <td class="fw-semibold"><?= htmlspecialchars($u["name"]) ?> <?= $isMe ? "<span class='badge bg-info'>You</span>" : "" ?></td>
               <td><?= htmlspecialchars($u["email"]) ?></td>
@@ -104,12 +87,12 @@ $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
                   <span class="ws-muted small">No action</span>
                 <?php else: ?>
                   <div class="d-flex justify-content-end gap-2 flex-wrap">
+
                     <form method="post" style="display:inline;">
                       <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
                       <input type="hidden" name="action" value="toggle">
                       <input type="hidden" name="id" value="<?= $uid ?>">
-                      <button class="btn btn-sm btn-outline-primary"
-                        onclick="return confirm('Toggle this user status?');">
+                      <button class="btn btn-sm btn-outline-primary" onclick="return confirm('Toggle this user status?');">
                         Activate/Deactivate
                       </button>
                     </form>
@@ -119,12 +102,12 @@ $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token()) ?>">
                         <input type="hidden" name="action" value="promote">
                         <input type="hidden" name="id" value="<?= $uid ?>">
-                        <button class="btn btn-sm btn-outline-success"
-                          onclick="return confirm('Promote this user to admin?');">
-                          Promote to Admin
+                        <button class="btn btn-sm btn-outline-success" onclick="return confirm('Promote this user to admin?');">
+                          Promote
                         </button>
                       </form>
                     <?php endif; ?>
+
                   </div>
                 <?php endif; ?>
               </td>

@@ -1,25 +1,13 @@
 <?php
 require_once __DIR__ . "/auth_check.php";
+require_once __DIR__ . "/csrf.php";
+
 if (($_SESSION["role"] ?? "") !== "admin") die("Access denied");
 
-if (session_status() === PHP_SESSION_NONE) session_start();
-
-// CSRF token for download (GET)
-function csrf_token(): string {
-    if (empty($_SESSION["csrf_token"])) $_SESSION["csrf_token"] = bin2hex(random_bytes(32));
-    return $_SESSION["csrf_token"];
-}
-function csrf_check_get(): bool {
-    $t = $_GET["token"] ?? "";
-    return $t && hash_equals($_SESSION["csrf_token"] ?? "", $t);
-}
-
-function isValidDate($s) {
+function isValidDate($s): bool {
     $d = DateTime::createFromFormat("Y-m-d", $s);
     return $d && $d->format("Y-m-d") === $s;
 }
-
-// Prevent CSV injection (Excel formula)
 function safe_csv($value): string {
     $v = (string)$value;
     if (preg_match('/^[=\+\-@]/', $v)) return "'".$v;
@@ -32,10 +20,7 @@ $to = trim($_GET["to"] ?? "");
 $staff_id = (int)($_GET["staff_id"] ?? 0);
 
 if ($download === 1) {
-    if (!csrf_check_get()) {
-        http_response_code(403);
-        exit("Invalid token.");
-    }
+    csrf_validate_get("token");
 
     $where = [];
     $params = [];
@@ -68,7 +53,6 @@ if ($download === 1) {
     JOIN users u ON u.user_id = f.user_id
     LEFT JOIN language_skills ls ON ls.form_id = f.form_id
     ";
-
     if ($where) $sql .= " WHERE " . implode(" AND ", $where);
     $sql .= " ORDER BY f.created_at DESC";
 
@@ -123,14 +107,10 @@ if ($download === 1) {
     exit;
 }
 
-// UI page
 $title = "Export CSV";
 require_once __DIR__ . "/header.php";
 
-// staff list
 $staff = $conn->query("SELECT user_id, name FROM users WHERE role='online_posting' ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
-
-// token for download link
 $token = csrf_token();
 ?>
 
