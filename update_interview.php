@@ -13,7 +13,6 @@ if (!isset($conn) || !($conn instanceof PDO)) {
 }
 
 if (empty($_SESSION['_csrf'])) $_SESSION['_csrf'] = bin2hex(random_bytes(32));
-
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
   http_response_code(405);
   exit('Method Not Allowed');
@@ -47,8 +46,6 @@ try {
 
   $fromStage = (string)($old['interview_stage'] ?? '');
   $fromDate  = $old['interview_date'];
-
-  // ✅ 自动变 scheduled
   $toStage = 'scheduled';
 
   $upd = $conn->prepare("
@@ -58,7 +55,7 @@ try {
   ");
   $upd->execute([':dt' => $mysqlDT, ':stage' => $toStage, ':id' => $formId]);
 
-  // ✅ 写 audit log（如果表存在）
+  // audit log if exists
   try {
     $log = $conn->prepare("
       INSERT INTO interview_stage_logs
@@ -74,9 +71,7 @@ try {
       ':from_date' => $fromDate,
       ':to_date' => $mysqlDT,
     ]);
-  } catch(Throwable $e) {
-    // ignore if table not exist
-  }
+  } catch(Throwable $e) {}
 
   $conn->commit();
 } catch(Throwable $e) {
@@ -86,8 +81,8 @@ try {
 }
 
 if ($backDate && preg_match('/^\d{4}-\d{2}-\d{2}$/', $backDate)) {
-  header('Location: calendar_day.php?date=' . urlencode($backDate));
+  header('Location: /wishSystem/calendar_day.php?date=' . urlencode($backDate));
 } else {
-  header('Location: form_detail.php?form_id=' . $formId);
+  header('Location: /wishSystem/form_detail.php?form_id=' . $formId);
 }
 exit;

@@ -12,7 +12,6 @@ if (!isset($conn) || !($conn instanceof PDO)) {
   exit('DB connection $conn not found');
 }
 
-// CSRF token
 if (empty($_SESSION['_csrf'])) $_SESSION['_csrf'] = bin2hex(random_bytes(32));
 
 $date = $_GET['date'] ?? date('Y-m-d');
@@ -53,7 +52,7 @@ require_once __DIR__ . '/header.php';
       <h3 class="mb-0"><?= htmlspecialchars($date) ?> <span class="text-muted">(<?= htmlspecialchars($weekday) ?>)</span></h3>
       <div class="small text-muted">Total interviews: <b><?= count($rows) ?></b></div>
     </div>
-    <a class="btn btn-outline-secondary" href="calendar.php">Back</a>
+    <a class="btn btn-outline-secondary" href="/wishSystem/calendar.php">Back</a>
   </div>
 
   <?php if (!$rows): ?>
@@ -85,7 +84,7 @@ require_once __DIR__ . '/header.php';
           <tr>
             <td><?= htmlspecialchars(fmt_dt($r['interview_date'])) ?></td>
             <td>
-              <a class="text-decoration-none" href="form_detail.php?form_id=<?= (int)$r['form_id'] ?>">
+              <a class="text-decoration-none" href="/wishSystem/form_detail.php?form_id=<?= (int)$r['form_id'] ?>">
                 <?= htmlspecialchars($r['name'] ?? '') ?>
               </a>
             </td>
@@ -93,7 +92,7 @@ require_once __DIR__ . '/header.php';
             <td><?= htmlspecialchars($r['position'] ?? '') ?></td>
             <td><span class="badge bg-secondary"><?= htmlspecialchars($r['interview_stage'] ?? '') ?></span></td>
             <td class="text-end">
-              <form class="d-inline-flex gap-2" method="post" action="update_interview.php">
+              <form class="d-inline-flex gap-2" method="post" action="/wishSystem/update_interview.php">
                 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['_csrf']) ?>">
                 <input type="hidden" name="form_id" value="<?= (int)$r['form_id'] ?>">
                 <input type="hidden" name="back_date" value="<?= htmlspecialchars($date) ?>">

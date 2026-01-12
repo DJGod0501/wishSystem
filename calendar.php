@@ -7,8 +7,6 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
   http_response_code(403);
   exit('Forbidden');
 }
-
-// db.php 里一般是 $conn (PDO)
 if (!isset($conn) || !($conn instanceof PDO)) {
   http_response_code(500);
   exit('DB connection $conn not found in db.php');
@@ -16,7 +14,6 @@ if (!isset($conn) || !($conn instanceof PDO)) {
 
 $year  = isset($_GET['y']) ? (int)$_GET['y'] : (int)date('Y');
 $month = isset($_GET['m']) ? (int)$_GET['m'] : (int)date('n');
-
 if ($year < 2000 || $year > 2100) $year = (int)date('Y');
 if ($month < 1 || $month > 12) $month = (int)date('n');
 
@@ -60,9 +57,9 @@ require_once __DIR__ . '/header.php';
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h3 class="mb-0">Admin Calendar — <?= htmlspecialchars($firstDay->format('F Y')) ?></h3>
     <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary" href="calendar.php?y=<?= (int)$prev->format('Y') ?>&m=<?= (int)$prev->format('n') ?>">← Prev</a>
-      <a class="btn btn-outline-secondary" href="calendar.php">Today</a>
-      <a class="btn btn-outline-secondary" href="calendar.php?y=<?= (int)$next->format('Y') ?>&m=<?= (int)$next->format('n') ?>">Next →</a>
+      <a class="btn btn-outline-secondary" href="/wishSystem/calendar.php?y=<?= (int)$prev->format('Y') ?>&m=<?= (int)$prev->format('n') ?>">← Prev</a>
+      <a class="btn btn-outline-secondary" href="/wishSystem/calendar.php">Today</a>
+      <a class="btn btn-outline-secondary" href="/wishSystem/calendar.php?y=<?= (int)$next->format('Y') ?>&m=<?= (int)$next->format('n') ?>">Next →</a>
     </div>
   </div>
 
@@ -89,7 +86,7 @@ require_once __DIR__ . '/header.php';
 
           echo "<td style='vertical-align:top; height:110px; $cellStyle $todayBorder'>";
           echo "<div class='d-flex justify-content-between'>";
-          echo "<a class='text-decoration-none fw-semibold' href='calendar_day.php?date=" . urlencode($dateKey) . "'>" . (int)$cursor->format('j') . "</a>";
+          echo "<a class='text-decoration-none fw-semibold' href='/wishSystem/calendar_day.php?date=" . urlencode($dateKey) . "'>" . (int)$cursor->format('j') . "</a>";
           if ($cnt > 0) echo "<span class='badge $badgeClass'>$label</span>";
           echo "</div>";
 
@@ -107,10 +104,6 @@ require_once __DIR__ . '/header.php';
       ?>
       </tbody>
     </table>
-  </div>
-
-  <div class="small text-muted mt-2">
-    只有设置了 <b>interview_date</b> 的记录才会出现在月历。
   </div>
 </div>
 
