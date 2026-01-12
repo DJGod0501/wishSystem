@@ -61,7 +61,7 @@ $titleSafe = htmlspecialchars($title ?? 'WishSystem', ENT_QUOTES, 'UTF-8');
 <?php elseif ($role === 'online_posting'): ?>
 <li class="nav-item"><a class="nav-link<?= nav_active('submit_form.php',$current) ?>" href="submit_form.php">Submit Form</a></li>
 <li class="nav-item"><a class="nav-link<?= nav_active('my_form.php',$current) ?>" href="my_form.php">My Forms</a></li>
-<li class="nav-item"><a class="nav-link<?= nav_active('my_calander.php',$current) ?>" href="my_calander.php">My Calendar</a></li>
+<li class="nav-item"><a class="nav-link<?= nav_active('my_calender.php',$current) ?>" href="my_calender.php">My Calendar</a></li>
 
 <?php else: ?>
 <li class="nav-item"><a class="nav-link<?= nav_active('login.php',$current) ?>" href="login.php">Login</a></li>
