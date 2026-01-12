@@ -1,95 +1,134 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/db.php';
-require_once __DIR__ . '/header.php';
 
-if (!isset($_SESSION['role']) || $_SESSION['role'] === 'admin') {
-    // staff only (online_posting)
-    // 如果你允许 admin 也看，就把这段删掉
+// Admin guard
+if (empty($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
+    http_response_code(403);
+    exit('Forbidden');
 }
 
-$userId = (int)($_SESSION['user_id'] ?? 0);
+// DB guard (your project uses $conn)
+if (!isset($conn) || !($conn instanceof PDO)) {
+    http_response_code(500);
+    exit('DB connection $conn not found');
+}
 
-$db = null;
-if (isset($pdo) && $pdo instanceof PDO) $db = $pdo;
-if (isset($conn) && $conn instanceof PDO) $db = $conn;
+function h(string $s): string {
+    return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
+}
 
-function h($v): string { return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); }
+function loadLabel(int $n): array {
+    if ($n === 0) return ['None', 'secondary'];
+    if ($n <= 2)  return ['Light', 'success'];
+    if ($n <= 4)  return ['Normal', 'warning'];
+    return ['Busy', 'danger'];
+}
 
-$month = $_GET['month'] ?? date('Y-m');
-if (!preg_match('/^\d{4}-\d{2}$/', $month)) $month = date('Y-m');
+// Month handling
+$ym = $_GET['ym'] ?? date('Y-m');
+if (!preg_match('/^\d{4}-\d{2}$/', $ym)) $ym = date('Y-m');
 
-$firstDay = $month . '-01';
-$startTs = strtotime($firstDay);
-$daysInMonth = (int)date('t', $startTs);
-$startWeekday = (int)date('N', $startTs);
+$year  = (int)substr($ym, 0, 4);
+$month = (int)substr($ym, 5, 2);
+if ($month < 1 || $month > 12) {
+    $year = (int)date('Y');
+    $month = (int)date('m');
+    $ym = sprintf('%04d-%02d', $year, $month);
+}
 
-$prevMonth = date('Y-m', strtotime('-1 month', $startTs));
-$nextMonth = date('Y-m', strtotime('+1 month', $startTs));
+$firstDay = new DateTimeImmutable(sprintf('%04d-%02d-01', $year, $month));
+$daysInMonth = (int)$firstDay->format('t');
+$startWeekday = (int)$firstDay->format('N'); // 1=Mon
 
-// badge counts per day (staff submissions by created_at date)
+$rangeStart = $firstDay->format('Y-m-01 00:00:00');
+$rangeEnd   = $firstDay->modify('+1 month')->format('Y-m-01 00:00:00');
+
+// Load interview counts
+$sql = "
+    SELECT DATE(interview_date) AS d, COUNT(*) AS cnt
+    FROM interview_forms
+    WHERE interview_date IS NOT NULL
+      AND interview_date >= :start
+      AND interview_date < :end
+    GROUP BY DATE(interview_date)
+";
+$stmt = $conn->prepare($sql);
+$stmt->execute([':start' => $rangeStart, ':end' => $rangeEnd]);
+
 $counts = [];
-if ($db && $userId > 0) {
-    $monthStart = $month . '-01 00:00:00';
-    $monthEnd = date('Y-m-t', $startTs) . ' 23:59:59';
-
-    $stmt = $db->prepare("
-        SELECT DATE(created_at) AS d, COUNT(*) AS c
-        FROM interview_forms
-        WHERE user_id = ? AND created_at BETWEEN ? AND ?
-        GROUP BY DATE(created_at)
-    ");
-    $stmt->execute([$userId, $monthStart, $monthEnd]);
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
-        $counts[$r['d']] = (int)$r['c'];
-    }
+while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+    $counts[$row['d']] = (int)$row['cnt'];
 }
+
+// Nav
+$prevYm = $firstDay->modify('-1 month')->format('Y-m');
+$nextYm = $firstDay->modify('+1 month')->format('Y-m');
+
+$pageTitle = 'Admin Calendar';
+require_once __DIR__ . '/header.php';
 ?>
 
-<div class="container py-4">
-  <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-    <a class="btn btn-outline-secondary" href="my_calender.php?month=<?= h($prevMonth) ?>">&laquo; Prev</a>
-    <h3 class="mb-0"><?= h(date('F Y', $startTs)) ?></h3>
-    <a class="btn btn-outline-secondary" href="my_calender.php?month=<?= h($nextMonth) ?>">Next &raquo;</a>
+<div class="container my-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h3><?= h($firstDay->format('F Y')) ?></h3>
+    <div>
+      <a class="btn btn-outline-secondary btn-sm" href="/wishSystem/calendar.php?ym=<?= h($prevYm) ?>">← Prev</a>
+      <a class="btn btn-outline-secondary btn-sm" href="/wishSystem/calendar.php">Today</a>
+      <a class="btn btn-outline-secondary btn-sm" href="/wishSystem/calendar.php?ym=<?= h($nextYm) ?>">Next →</a>
+    </div>
   </div>
 
   <table class="table table-bordered text-center align-middle">
     <thead class="table-light">
       <tr>
-        <th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th>
+        <th>Mon</th><th>Tue</th><th>Wed</th>
+        <th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th>
       </tr>
     </thead>
     <tbody>
       <tr>
         <?php
-        for ($i = 1; $i < $startWeekday; $i++) echo '<td></td>';
-
-        for ($day = 1; $day <= $daysInMonth; $day++) {
-            $cellDate = sprintf('%s-%02d', $month, $day);
-            $badge = $counts[$cellDate] ?? 0;
-
-            echo '<td>';
-            echo '<div class="d-flex justify-content-between align-items-start">';
-            echo '<a class="fw-semibold text-decoration-none" href="my_calender_day.php?date=' . h($cellDate) . '">';
-            echo $day;
-            echo '</a>';
-            if ($badge > 0) echo '<span class="badge bg-success">' . $badge . '</span>';
-            echo '</div>';
-            echo '</td>';
-
-            if ((($day + $startWeekday - 1) % 7) === 0) echo '</tr><tr>';
+        for ($i = 1; $i < $startWeekday; $i++) {
+            echo '<td class="bg-light"></td>';
         }
 
-        $endCells = (7 - (($daysInMonth + $startWeekday - 1) % 7)) % 7;
-        for ($i = 0; $i < $endCells; $i++) echo '<td></td>';
+        $day = 1;
+        $cell = $startWeekday;
+
+        while ($day <= $daysInMonth) {
+            $dateStr = sprintf('%04d-%02d-%02d', $year, $month, $day);
+            $cnt = $counts[$dateStr] ?? 0;
+            [$label, $color] = loadLabel($cnt);
+
+            echo '<td style="height:90px; vertical-align:top">';
+            echo '<div class="fw-bold">' . (int)$day . '</div>';
+            echo '<span class="badge text-bg-' . h($color) . '">' . (int)$cnt . '</span><br>';
+            echo '<small>' . h($label) . '</small><br>';
+            echo '<a class="btn btn-sm btn-outline-primary mt-1" href="/wishSystem/calendar_day.php?date=' . h($dateStr) . '">View</a>';
+            echo '</td>';
+
+            $day++;
+            $cell++;
+
+            if ($cell > 7 && $day <= $daysInMonth) {
+                echo '</tr><tr>';
+                $cell = 1;
+            }
+        }
+
+        if ($cell !== 1) {
+            for ($i = $cell; $i <= 7; $i++) {
+                echo '<td class="bg-light"></td>';
+            }
+        }
         ?>
       </tr>
     </tbody>
   </table>
-
-  <div class="text-muted small">Tip: click a date to view your submissions (by created_at).</div>
 </div>
 
 <?php require_once __DIR__ . '/footer.php'; ?>

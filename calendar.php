@@ -1,155 +1,32 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/bootstrap.php';
-require_once __DIR__ . '/auth_check.php';
-require_once __DIR__ . '/db.php';
+ini_set('display_errors', '1');
+ini_set('display_startup_errors', '1');
+error_reporting(E_ALL);
+header('Content-Type: text/plain; charset=utf-8');
 
-/* =========================
-   🔴 DEBUG CONFIRMATION
-   ========================= */
-echo "CALENDAR LOADED<br>";
-var_dump(isset($conn), isset($pdo));
-exit;
-/* =========================
-   ↑↑ 看完输出再继续 ↓↓
-   ========================= */
+echo "STEP 0: calendar.php reached\n";
 
-/* =========================
-   Admin Guard
-   ========================= */
-if (empty($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    http_response_code(403);
-    exit('Forbidden');
-}
+$boot = __DIR__ . '/bootstrap.php';
+echo "STEP 1: bootstrap exists? " . (is_file($boot) ? 'YES' : 'NO') . "\n";
+if (!is_file($boot)) exit("STOP: bootstrap.php missing\n");
+require_once $boot;
+echo "STEP 2: bootstrap included OK\n";
 
-/* =========================
-   DB Guard
-   ========================= */
-if (!isset($conn) || !($conn instanceof PDO)) {
-    http_response_code(500);
-    exit('DB connection $conn not found');
-}
+$auth = __DIR__ . '/auth_check.php';
+echo "STEP 3: auth_check exists? " . (is_file($auth) ? 'YES' : 'NO') . "\n";
+if (!is_file($auth)) exit("STOP: auth_check.php missing\n");
+require_once $auth;
+echo "STEP 4: auth_check included OK\n";
 
-$pageTitle = 'Admin Calendar';
-require_once __DIR__ . '/header.php';
+$db = __DIR__ . '/db.php';
+echo "STEP 5: db exists? " . (is_file($db) ? 'YES' : 'NO') . "\n";
+if (!is_file($db)) exit("STOP: db.php missing\n");
+require_once $db;
+echo "STEP 6: db included OK\n";
 
-/* =========================
-   Month handling
-   ========================= */
-$ym = $_GET['ym'] ?? date('Y-m');
-if (!preg_match('/^\d{4}-\d{2}$/', $ym)) {
-    $ym = date('Y-m');
-}
+echo "STEP 7: isset(\$conn)=" . (isset($conn) ? 'YES' : 'NO') . " ; isset(\$pdo)=" . (isset($pdo) ? 'YES' : 'NO') . "\n";
+echo "STEP 8: role=" . ($_SESSION['role'] ?? 'NONE') . " user_id=" . ($_SESSION['user_id'] ?? 'NONE') . "\n";
 
-$year  = (int)substr($ym, 0, 4);
-$month = (int)substr($ym, 5, 2);
-
-$firstDay = new DateTimeImmutable(sprintf('%04d-%02d-01', $year, $month));
-$daysInMonth = (int)$firstDay->format('t');
-$startWeekday = (int)$firstDay->format('N'); // 1=Mon
-
-$startDate = $firstDay->format('Y-m-01 00:00:00');
-$endDate   = $firstDay->modify('+1 month')->format('Y-m-01 00:00:00');
-
-/* =========================
-   Load interview counts
-   ========================= */
-$sql = "
-    SELECT DATE(interview_date) AS d, COUNT(*) AS cnt
-    FROM interview_forms
-    WHERE interview_date IS NOT NULL
-      AND interview_date >= :start
-      AND interview_date < :end
-    GROUP BY DATE(interview_date)
-";
-
-$stmt = $conn->prepare($sql);
-$stmt->execute([
-    ':start' => $startDate,
-    ':end'   => $endDate,
-]);
-
-$counts = [];
-while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-    $counts[$row['d']] = (int)$row['cnt'];
-}
-
-/* =========================
-   Helpers
-   ========================= */
-function h(string $s): string {
-    return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
-}
-
-function loadLabel(int $n): array {
-    if ($n === 0) return ['None', 'secondary'];
-    if ($n <= 2)  return ['Light', 'success'];
-    if ($n <= 4)  return ['Normal', 'warning'];
-    return ['Busy', 'danger'];
-}
-
-$prevYm = $firstDay->modify('-1 month')->format('Y-m');
-$nextYm = $firstDay->modify('+1 month')->format('Y-m');
-?>
-
-<div class="container my-4">
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <h3><?= h($firstDay->format('F Y')) ?></h3>
-    <div>
-      <a class="btn btn-outline-secondary btn-sm" href="/wishSystem/calendar.php?ym=<?= h($prevYm) ?>">← Prev</a>
-      <a class="btn btn-outline-secondary btn-sm" href="/wishSystem/calendar.php">Today</a>
-      <a class="btn btn-outline-secondary btn-sm" href="/wishSystem/calendar.php?ym=<?= h($nextYm) ?>">Next →</a>
-    </div>
-  </div>
-
-  <table class="table table-bordered text-center align-middle">
-    <thead class="table-light">
-      <tr>
-        <th>Mon</th><th>Tue</th><th>Wed</th>
-        <th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <?php
-        for ($i = 1; $i < $startWeekday; $i++) {
-            echo '<td class="bg-light"></td>';
-        }
-
-        $day = 1;
-        $cell = $startWeekday;
-
-        while ($day <= $daysInMonth) {
-            $dateStr = sprintf('%04d-%02d-%02d', $year, $month, $day);
-            $cnt = $counts[$dateStr] ?? 0;
-            [$label, $color] = loadLabel($cnt);
-
-            echo '<td style="height:90px; vertical-align:top">';
-            echo '<div class="fw-bold">' . (int)$day . '</div>';
-            echo '<span class="badge text-bg-' . h($color) . '">' . (int)$cnt . '</span><br>';
-            echo '<small>' . h($label) . '</small><br>';
-            echo '<a class="btn btn-sm btn-outline-primary mt-1" href="/wishSystem/calendar_day.php?date=' . h($dateStr) . '">View</a>';
-            echo '</td>';
-
-            $day++;
-            $cell++;
-
-            if ($cell > 7 && $day <= $daysInMonth) {
-                echo '</tr><tr>';
-                $cell = 1;
-            }
-        }
-
-        if ($cell !== 1) {
-            for ($i = $cell; $i <= 7; $i++) {
-                echo '<td class="bg-light"></td>';
-            }
-        }
-        ?>
-      </tr>
-    </tbody>
-  </table>
-</div>
-
-<?php require_once __DIR__ . '/footer.php'; ?>
+exit("DONE: calendar preflight OK\n");
