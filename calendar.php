@@ -1,210 +1,190 @@
 <?php
+// calendar.php (Admin)
+// Simplified UI version:
+// - Remove "Unscheduled (latest 20)" block
+// - Hide "Total 0 / None"
+// - Only show badges + View button when that date has interviews
+
 declare(strict_types=1);
 
-require_once __DIR__ . '/bootstrap.php';
-require_once __DIR__ . '/auth_check.php';
+session_start();
+
 require_once __DIR__ . '/db.php';
 
-if (empty($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
+// ====== AUTH / ROLE CHECK (adjust if your project uses helper functions) ======
+if (!isset($_SESSION['user_id'])) {
+    header('Location: login.php');
+    exit;
+}
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
     http_response_code(403);
-    exit('Forbidden');
-}
-if (!isset($conn) || !($conn instanceof PDO)) {
-    http_response_code(500);
-    exit('DB connection $conn not found');
+    echo "Forbidden";
+    exit;
 }
 
-function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
-function loadLabel(int $n): array {
-    if ($n === 0) return ['None', 'secondary'];
-    if ($n <= 2)  return ['Light', 'success'];
-    if ($n <= 4)  return ['Normal', 'warning'];
-    return ['Busy', 'danger'];
+// ====== Month handling ======
+$tz = new DateTimeZone('Asia/Kuala_Lumpur'); // adjust if needed
+$today = new DateTime('now', $tz);
+
+$monthParam = isset($_GET['month']) ? trim((string)$_GET['month']) : '';
+if ($monthParam !== '' && preg_match('/^\d{4}-\d{2}$/', $monthParam)) {
+    $currentMonth = DateTime::createFromFormat('Y-m-d', $monthParam . '-01', $tz);
+    if ($currentMonth === false) {
+        $currentMonth = new DateTime($today->format('Y-m-01'), $tz);
+    }
+} else {
+    $currentMonth = new DateTime($today->format('Y-m-01'), $tz);
 }
 
-// Month
-$ym = $_GET['ym'] ?? date('Y-m');
-if (!preg_match('/^\d{4}-\d{2}$/', $ym)) $ym = date('Y-m');
+// Range: [monthStart, nextMonthStart)
+$monthStart = (clone $currentMonth)->setTime(0, 0, 0);
+$nextMonthStart = (clone $monthStart)->modify('+1 month');
+$monthEndExclusive = (clone $nextMonthStart);
 
-$year  = (int)substr($ym, 0, 4);
-$month = (int)substr($ym, 5, 2);
-if ($month < 1 || $month > 12) {
-    $year = (int)date('Y');
-    $month = (int)date('m');
-}
-$firstDay = new DateTimeImmutable(sprintf('%04d-%02d-01', $year, $month));
-$daysInMonth = (int)$firstDay->format('t');
-$startWeekday = (int)$firstDay->format('N'); // 1=Mon
+// Calendar grid start (Monday-based)
+$firstDayOfMonth = (clone $monthStart);
+$firstWeekday = (int)$firstDayOfMonth->format('N'); // 1=Mon..7=Sun
+$gridStart = (clone $firstDayOfMonth)->modify('-' . ($firstWeekday - 1) . ' days'); // back to Monday
 
-$rangeStart = $firstDay->format('Y-m-01 00:00:00');
-$rangeEnd   = $firstDay->modify('+1 month')->format('Y-m-01 00:00:00');
+// Calendar grid end (6 weeks max)
+$gridEnd = (clone $gridStart)->modify('+41 days'); // 42 cells total
 
-// ✅ Unscheduled list (no in-person & no online time)
-$unscheduledStmt = $conn->prepare("
-  SELECT form_id, name, phone, position, interview_stage, created_at
-  FROM interview_forms
-  WHERE (interview_in_person_at IS NULL AND interview_online_at IS NULL)
-    AND interview_stage IN ('new','scheduled')
-  ORDER BY created_at DESC, form_id DESC
-  LIMIT 20
-");
-$unscheduledStmt->execute();
-$unscheduled = $unscheduledStmt->fetchAll(PDO::FETCH_ASSOC);
+// Prev/Next month links
+$prevMonth = (clone $monthStart)->modify('-1 month')->format('Y-m');
+$nextMonth = (clone $monthStart)->modify('+1 month')->format('Y-m');
+$thisMonth = $today->format('Y-m');
 
-// ✅ Monthly counts (fix HY093 by distinct param names)
+// ====== Fetch counts per day (in-person & online) ======
+// We count interview_in_person_at and interview_online_at separately.
+// Each interview time counts once for that date.
+$countsByDate = []; // 'YYYY-MM-DD' => ['in' => int, 'on' => int]
+
 $sql = "
-  SELECT d,
-         SUM(in_person_cnt) AS in_person_cnt,
-         SUM(online_cnt)    AS online_cnt
-  FROM (
-    SELECT DATE(interview_in_person_at) AS d,
-           COUNT(*) AS in_person_cnt,
-           0 AS online_cnt
+SELECT day_key, SUM(in_cnt) AS in_person_cnt, SUM(on_cnt) AS online_cnt
+FROM (
+    SELECT DATE(interview_in_person_at) AS day_key, COUNT(*) AS in_cnt, 0 AS on_cnt
     FROM interview_forms
     WHERE interview_in_person_at IS NOT NULL
-      AND interview_in_person_at >= :s1 AND interview_in_person_at < :e1
+      AND interview_in_person_at >= :start1
+      AND interview_in_person_at <  :end1
     GROUP BY DATE(interview_in_person_at)
 
     UNION ALL
 
-    SELECT DATE(interview_online_at) AS d,
-           0 AS in_person_cnt,
-           COUNT(*) AS online_cnt
+    SELECT DATE(interview_online_at) AS day_key, 0 AS in_cnt, COUNT(*) AS on_cnt
     FROM interview_forms
     WHERE interview_online_at IS NOT NULL
-      AND interview_online_at >= :s2 AND interview_online_at < :e2
+      AND interview_online_at >= :start2
+      AND interview_online_at <  :end2
     GROUP BY DATE(interview_online_at)
-  ) x
-  GROUP BY d
+) t
+GROUP BY day_key
 ";
-$stmt = $conn->prepare($sql);
-$stmt->execute([
-    ':s1' => $rangeStart, ':e1' => $rangeEnd,
-    ':s2' => $rangeStart, ':e2' => $rangeEnd,
-]);
 
-$counts = [];
+$stmt = $conn->prepare($sql);
+$params = [
+    ':start1' => $monthStart->format('Y-m-d H:i:s'),
+    ':end1'   => $monthEndExclusive->format('Y-m-d H:i:s'),
+    ':start2' => $monthStart->format('Y-m-d H:i:s'),
+    ':end2'   => $monthEndExclusive->format('Y-m-d H:i:s'),
+];
+$stmt->execute($params);
+
 while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-    $d = (string)$row['d'];
-    $inPerson = (int)($row['in_person_cnt'] ?? 0);
-    $online   = (int)($row['online_cnt'] ?? 0);
-    $counts[$d] = [
-        'in_person' => $inPerson,
-        'online' => $online,
-        'total' => $inPerson + $online,
+    $dayKey = (string)$row['day_key']; // YYYY-MM-DD
+    $countsByDate[$dayKey] = [
+        'in' => (int)$row['in_person_cnt'],
+        'on' => (int)$row['online_cnt'],
     ];
 }
 
-$prevYm = $firstDay->modify('-1 month')->format('Y-m');
-$nextYm = $firstDay->modify('+1 month')->format('Y-m');
-
-$pageTitle = 'Admin Calendar';
+// ====== Render ======
+$pageTitle = "Calendar";
 require_once __DIR__ . '/header.php';
 ?>
 
 <div class="container my-4">
 
-  <?php if ($unscheduled): ?>
-    <div class="alert alert-warning d-flex justify-content-between align-items-center">
-      <div>
-        <div class="fw-semibold">Unscheduled interviews (need scheduling)</div>
-        <div class="small">These forms have no in-person/online time yet.</div>
-      </div>
-      <a class="btn btn-sm btn-outline-dark" href="/wishSystem/form.php">Go to All Forms</a>
-    </div>
-
-    <div class="card mb-3">
-      <div class="card-header fw-semibold">
-        Unscheduled (latest 20)
-      </div>
-      <div class="card-body p-0">
-        <div class="table-responsive">
-          <table class="table table-striped align-middle mb-0">
-            <thead class="table-light">
-              <tr>
-                <th style="width:90px;">ID</th>
-                <th>Candidate</th>
-                <th style="width:140px;">Phone</th>
-                <th style="width:180px;">Position</th>
-                <th style="width:120px;">Stage</th>
-                <th style="width:200px;">Created</th>
-                <th class="text-end" style="width:160px;">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-            <?php foreach ($unscheduled as $u): ?>
-              <tr>
-                <td><?= (int)$u['form_id'] ?></td>
-                <td><?= h((string)($u['name'] ?? '')) ?></td>
-                <td><?= h((string)($u['phone'] ?? '')) ?></td>
-                <td><?= h((string)($u['position'] ?? '')) ?></td>
-                <td><span class="badge bg-secondary"><?= h((string)($u['interview_stage'] ?? '')) ?></span></td>
-                <td><?= h((string)($u['created_at'] ?? '')) ?></td>
-                <td class="text-end">
-                  <a class="btn btn-sm btn-outline-primary" href="/wishSystem/form_detail.php?form_id=<?= (int)$u['form_id'] ?>">Detail</a>
-                </td>
-              </tr>
-            <?php endforeach; ?>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  <?php endif; ?>
-
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <h3><?= h($firstDay->format('F Y')) ?></h3>
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
     <div>
-      <a class="btn btn-outline-secondary btn-sm" href="/wishSystem/calendar.php?ym=<?= h($prevYm) ?>">← Prev</a>
-      <a class="btn btn-outline-secondary btn-sm" href="/wishSystem/calendar.php">Today</a>
-      <a class="btn btn-outline-secondary btn-sm" href="/wishSystem/calendar.php?ym=<?= h($nextYm) ?>">Next →</a>
+      <h2 class="mb-0"><?php echo htmlspecialchars($monthStart->format('F Y')); ?></h2>
+      <div class="text-muted small">Admin Calendar</div>
+    </div>
+
+    <div class="btn-group" role="group" aria-label="Calendar navigation">
+      <a class="btn btn-outline-secondary" href="calendar.php?month=<?php echo urlencode($prevMonth); ?>">← Prev</a>
+      <a class="btn btn-outline-secondary" href="calendar.php?month=<?php echo urlencode($thisMonth); ?>">Today</a>
+      <a class="btn btn-outline-secondary" href="calendar.php?month=<?php echo urlencode($nextMonth); ?>">Next →</a>
     </div>
   </div>
 
-  <table class="table table-bordered text-center align-middle">
-    <thead class="table-light">
-      <tr>
-        <th>Mon</th><th>Tue</th><th>Wed</th>
-        <th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
+  <div class="table-responsive">
+    <table class="table table-bordered align-middle text-center" style="min-width: 900px;">
+      <thead class="table-light">
+        <tr>
+          <th style="width:14.28%;">Mon</th>
+          <th style="width:14.28%;">Tue</th>
+          <th style="width:14.28%;">Wed</th>
+          <th style="width:14.28%;">Thu</th>
+          <th style="width:14.28%;">Fri</th>
+          <th style="width:14.28%;">Sat</th>
+          <th style="width:14.28%;">Sun</th>
+        </tr>
+      </thead>
+      <tbody>
         <?php
-        for ($i = 1; $i < $startWeekday; $i++) echo '<td class="bg-light"></td>';
+        $cursor = clone $gridStart;
+        for ($week = 0; $week < 6; $week++) {
+            echo "<tr>";
+            for ($d = 0; $d < 7; $d++) {
+                $dateKey = $cursor->format('Y-m-d');
+                $isCurrentMonth = ($cursor->format('Y-m') === $monthStart->format('Y-m'));
+                $isToday = ($dateKey === $today->format('Y-m-d'));
 
-        $day = 1;
-        $cell = $startWeekday;
+                $inCnt = $countsByDate[$dateKey]['in'] ?? 0;
+                $onCnt = $countsByDate[$dateKey]['on'] ?? 0;
+                $total = $inCnt + $onCnt;
 
-        while ($day <= $daysInMonth) {
-            $dateStr = sprintf('%04d-%02d-%02d', $year, $month, $day);
+                $cellClasses = [];
+                $cellClasses[] = $isCurrentMonth ? '' : 'table-light text-muted';
+                if ($isToday) $cellClasses[] = 'border border-2 border-primary';
+                $cellClassStr = trim(implode(' ', array_filter($cellClasses)));
 
-            $inPerson = $counts[$dateStr]['in_person'] ?? 0;
-            $online   = $counts[$dateStr]['online'] ?? 0;
-            $total    = $counts[$dateStr]['total'] ?? 0;
+                echo '<td class="' . htmlspecialchars($cellClassStr) . '" style="height:130px;">';
 
-            [$label, $color] = loadLabel($total);
+                // Date number (always shown)
+                echo '<div class="fw-semibold mb-2" style="font-size:18px;">' . (int)$cursor->format('j') . '</div>';
 
-            echo '<td style="height:110px; vertical-align:top">';
-            echo '<div class="fw-bold">' . (int)$day . '</div>';
-            echo '<span class="badge text-bg-' . h($color) . '">Total ' . (int)$total . '</span><br>';
-            echo '<small>' . h($label) . '</small><br>';
-            echo '<div class="mt-1">';
-            echo '<span class="badge text-bg-primary me-1">In ' . (int)$inPerson . '</span>';
-            echo '<span class="badge text-bg-info">On ' . (int)$online . '</span>';
-            echo '</div>';
-            echo '<a class="btn btn-sm btn-outline-primary mt-2" href="/wishSystem/calendar_day.php?date=' . h($dateStr) . '">View</a>';
-            echo '</td>';
+                // Only show badges + View if there are interviews on that day
+                if ($total > 0) {
+                    echo '<div class="d-flex justify-content-center gap-2 flex-wrap mb-2">';
+                    if ($inCnt > 0) {
+                        echo '<span class="badge bg-primary">F2F ' . $inCnt . '</span>';
+                    }
+                    if ($onCnt > 0) {
+                        echo '<span class="badge bg-info text-dark">Online ' . $onCnt . '</span>';
+                    }
+                    echo '</div>';
 
-            $day++; $cell++;
-            if ($cell > 7 && $day <= $daysInMonth) { echo '</tr><tr>'; $cell = 1; }
+                    echo '<a class="btn btn-sm btn-outline-primary" href="calendar_day.php?date=' . urlencode($dateKey) . '">View</a>';
+                }
+
+                echo "</td>";
+
+                $cursor->modify('+1 day');
+            }
+            echo "</tr>";
+
+            // Stop early if next row is completely after month end (optional)
+            if ($cursor > $gridEnd) {
+                break;
+            }
         }
-
-        if ($cell !== 1) for ($i = $cell; $i <= 7; $i++) echo '<td class="bg-light"></td>';
         ?>
-      </tr>
-    </tbody>
-  </table>
+      </tbody>
+    </table>
+  </div>
+
 </div>
 
 <?php require_once __DIR__ . '/footer.php'; ?>
