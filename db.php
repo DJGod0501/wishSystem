@@ -1,31 +1,57 @@
 <?php
-// db.php
+declare(strict_types=1);
 
-$cfgFile = __DIR__ . "/config.php";
-if (!file_exists($cfgFile)) {
-    http_response_code(500);
-    exit("Missing config.php. Copy config.example.php to config.php and fill in credentials.");
+/**
+ * db.php
+ * - Reads config.php (return array)
+ * - Creates PDO as $conn
+ * - Provides backward compatibility alias $pdo
+ */
+
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
 }
 
-$cfg = require $cfgFile;
+// Load config.php (must return array)
+$configPath = __DIR__ . '/config.php';
+if (!is_file($configPath)) {
+    http_response_code(500);
+    exit('Missing config.php');
+}
 
-$host = $cfg["host"] ?? "localhost";
-$db   = $cfg["db"]   ?? "wishsystem";
-$user = $cfg["user"] ?? "root";
-$pass = $cfg["pass"] ?? "";
-$charset = "utf8mb4";
+$config = require $configPath;
+if (!is_array($config)) {
+    http_response_code(500);
+    exit('config.php must return an array');
+}
 
-$dsn = "mysql:host={$host};dbname={$db};charset={$charset}";
+// Validate config keys
+foreach (['host', 'db', 'user'] as $key) {
+    if (!array_key_exists($key, $config)) {
+        http_response_code(500);
+        exit("Missing DB config key: {$key}");
+    }
+}
 
-$options = [
-    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    PDO::ATTR_EMULATE_PREPARES   => false,
-];
+$db_host = $config['host'];
+$db_name = $config['db'];
+$db_user = $config['user'];
+$db_pass = $config['pass'] ?? '';
 
 try {
-    $conn = new PDO($dsn, $user, $pass, $options);
-} catch (Exception $e) {
+    $dsn = "mysql:host={$db_host};dbname={$db_name};charset=utf8mb4";
+    $conn = new PDO($dsn, (string)$db_user, (string)$db_pass, [
+        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES   => false,
+    ]);
+} catch (Throwable $e) {
     http_response_code(500);
-    exit("Database connection failed.");
+    exit('DB connection failed: ' . $e->getMessage());
 }
+
+/**
+ * ✅ Backward compatibility
+ * Some legacy pages still use $pdo
+ */
+$pdo = $conn;
