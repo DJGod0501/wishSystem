@@ -1,7 +1,4 @@
 <?php
-echo "HIT calendar_day.php ✅";
-exit;
-
 declare(strict_types=1);
 
 require_once __DIR__ . '/bootstrap.php';
@@ -29,12 +26,11 @@ $tz = new DateTimeZone('Asia/Kuala_Lumpur');
 // date param: YYYY-MM-DD
 $date = trim((string)($_GET['date'] ?? ''));
 if ($date === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
-    // default today
     $date = (new DateTime('now', $tz))->format('Y-m-d');
 }
 
 $dayStart = new DateTime($date . ' 00:00:00', $tz);
-$dayEnd = (clone $dayStart)->modify('+1 day');
+$dayEnd   = (clone $dayStart)->modify('+1 day');
 
 $prevDate = (clone $dayStart)->modify('-1 day')->format('Y-m-d');
 $nextDate = (clone $dayStart)->modify('+1 day')->format('Y-m-d');
@@ -80,7 +76,7 @@ $onlineList = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $pageTitle = 'Calendar Day';
 require_once __DIR__ . '/header.php';
 
-// Helper: countdown label
+// countdown label
 function countdownLabel(DateTimeZone $tz, string $dt): array {
     $now = new DateTime('now', $tz);
     $t = new DateTime($dt, $tz);
@@ -88,62 +84,40 @@ function countdownLabel(DateTimeZone $tz, string $dt): array {
     $absMin = (int)floor(abs($diffSec) / 60);
 
     if ($diffSec > 0) {
-        // future
         if ($absMin === 0) return ['Starts soon', 'text-bg-warning'];
         return ["Starts in {$absMin} min", $absMin <= 15 ? 'text-bg-warning' : 'text-bg-info'];
     }
-
-    // past
     if ($absMin <= 59) return ["Started {$absMin} min ago", 'text-bg-secondary'];
     return ['Past', 'text-bg-secondary'];
 }
-?>
 
-<div class="container my-4">
-
-  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-    <div>
-      <h3 class="mb-0">Calendar Day</h3>
-      <div class="text-muted">
-        <b><?= h($dayStart->format('d M Y (D)')) ?></b>
+// shared renderer
+function renderInterviewTable(array $list, string $typeLabel, string $typeKey, DateTimeZone $tz, string $date): void {
+    ?>
+    <div class="card mb-4">
+      <div class="card-header">
+        <div class="fw-semibold"><?= h($typeLabel) ?></div>
       </div>
-    </div>
 
-    <div class="btn-group" role="group" aria-label="Day navigation">
-      <a class="btn btn-outline-secondary" href="calendar_day.php?date=<?= urlencode($prevDate) ?>">← Prev</a>
-      <a class="btn btn-outline-secondary" href="calendar.php">Back to Calendar</a>
-      <a class="btn btn-outline-secondary" href="calendar_day.php?date=<?= urlencode($nextDate) ?>">Next →</a>
-    </div>
-  </div>
-
-  <!-- In-person -->
-  <div class="card mb-4">
-    <div class="card-header d-flex align-items-center justify-content-between">
-      <div class="fw-semibold">Face-to-face Interviews</div>
-      <span class="badge text-bg-primary">Total: <?= count($inPersonList) ?></span>
-    </div>
-
-    <div class="table-responsive">
-      <table class="table table-striped align-middle mb-0">
-        <thead class="table-light">
-          <tr>
-            <th style="width: 90px;">Time</th>
-            <th style="width: 240px;">Candidate</th>
-            <th>Position</th>
-            <th style="width: 150px;">Stage</th>
-            <th style="width: 160px;">Reminder</th>
-            <th style="width: 220px;">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-        <?php if (!$inPersonList): ?>
-          <tr><td colspan="6" class="text-center text-muted py-4">No face-to-face interviews.</td></tr>
-        <?php else: ?>
-          <?php foreach ($inPersonList as $row): ?>
+      <div class="table-responsive">
+        <table class="table table-striped align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th style="width: 90px;">Time</th>
+              <th style="width: 260px;">Candidate</th>
+              <th>Position</th>
+              <th style="width: 150px;">Stage</th>
+              <th style="width: 170px;">Reminder</th>
+              <th style="width: 240px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+          <?php foreach ($list as $row): ?>
             <?php
               $dt = (string)$row['interview_at'];
               $label = countdownLabel($tz, $dt);
               $timeStr = (new DateTime($dt, $tz))->format('H:i');
+              $suffix = $typeKey === 'in_person' ? 'in' : 'on';
             ?>
             <tr>
               <td class="fw-semibold"><?= h($timeStr) ?></td>
@@ -154,48 +128,40 @@ function countdownLabel(DateTimeZone $tz, string $dt): array {
                 <div class="small text-muted"><?= h($row['phone'] ?? '-') ?></div>
               </td>
               <td><?= h($row['position'] ?? '-') ?></td>
-              <td>
-                <span class="badge text-bg-secondary"><?= h($row['interview_stage'] ?? '-') ?></span>
-              </td>
-              <td>
-                <span class="badge <?= h($label[1]) ?>"><?= h($label[0]) ?></span>
-              </td>
+              <td><span class="badge text-bg-secondary"><?= h($row['interview_stage'] ?? '-') ?></span></td>
+              <td><span class="badge <?= h($label[1]) ?>"><?= h($label[0]) ?></span></td>
 
               <td>
                 <div class="d-flex gap-2 flex-wrap">
-                  <!-- Inline edit time (reuse your update_interview.php) -->
                   <button class="btn btn-sm btn-outline-primary"
                           data-bs-toggle="modal"
-                          data-bs-target="#editTime-<?= (int)$row['form_id'] ?>-in">
+                          data-bs-target="#editTime-<?= (int)$row['form_id'] ?>-<?= h($suffix) ?>">
                     Edit Time
                   </button>
 
-                  <!-- Complete interview -->
                   <button class="btn btn-sm btn-outline-success"
                           data-bs-toggle="modal"
-                          data-bs-target="#completeModal-<?= (int)$row['form_id'] ?>-in">
+                          data-bs-target="#completeModal-<?= (int)$row['form_id'] ?>-<?= h($suffix) ?>">
                     Complete
                   </button>
 
-                  <!-- Copy details -->
-                  <button class="btn btn-sm btn-outline-secondary"
-                          type="button"
-                          onclick="copyDetails('F2F', '<?= h($dayStart->format('d M Y')) ?>', '<?= h($timeStr) ?>', '<?= h($row['name'] ?? '-') ?>', '<?= h($row['phone'] ?? '-') ?>', '<?= h($row['position'] ?? '-') ?>', '<?= h($row['interview_stage'] ?? '-') ?>')">
+                  <button class="btn btn-sm btn-outline-secondary" type="button"
+                          onclick="copyDetails('<?= h($typeKey === 'in_person' ? 'F2F' : 'Online') ?>','<?= h((new DateTime($date, $tz))->format('d M Y')) ?>','<?= h($timeStr) ?>','<?= h($row['name'] ?? '-') ?>','<?= h($row['phone'] ?? '-') ?>','<?= h($row['position'] ?? '-') ?>','<?= h($row['interview_stage'] ?? '-') ?>')">
                     Copy
                   </button>
                 </div>
 
                 <!-- Edit Time Modal -->
-                <div class="modal fade" id="editTime-<?= (int)$row['form_id'] ?>-in" tabindex="-1" aria-hidden="true">
+                <div class="modal fade" id="editTime-<?= (int)$row['form_id'] ?>-<?= h($suffix) ?>" tabindex="-1" aria-hidden="true">
                   <div class="modal-dialog">
                     <form class="modal-content" method="post" action="update_interview.php">
                       <div class="modal-header">
-                        <h5 class="modal-title">Edit Time (F2F)</h5>
+                        <h5 class="modal-title">Edit Time (<?= h($typeKey === 'in_person' ? 'F2F' : 'Online') ?>)</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                       </div>
                       <div class="modal-body">
                         <input type="hidden" name="form_id" value="<?= (int)$row['form_id'] ?>">
-                        <input type="hidden" name="interview_type" value="in_person">
+                        <input type="hidden" name="interview_type" value="<?= h($typeKey) ?>">
                         <input type="hidden" name="back_to" value="calendar_day.php?date=<?= h($date) ?>">
 
                         <label class="form-label">New Date & Time</label>
@@ -211,17 +177,16 @@ function countdownLabel(DateTimeZone $tz, string $dt): array {
                 </div>
 
                 <!-- Complete Modal -->
-                <div class="modal fade" id="completeModal-<?= (int)$row['form_id'] ?>-in" tabindex="-1" aria-hidden="true">
+                <div class="modal fade" id="completeModal-<?= (int)$row['form_id'] ?>-<?= h($suffix) ?>" tabindex="-1" aria-hidden="true">
                   <div class="modal-dialog">
                     <form class="modal-content" method="post" action="complete_interview.php">
                       <div class="modal-header">
-                        <h5 class="modal-title">Complete Interview (F2F)</h5>
+                        <h5 class="modal-title">Complete Interview (<?= h($typeKey === 'in_person' ? 'F2F' : 'Online') ?>)</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                       </div>
-
                       <div class="modal-body">
                         <input type="hidden" name="form_id" value="<?= (int)$row['form_id'] ?>">
-                        <input type="hidden" name="interview_type" value="in_person">
+                        <input type="hidden" name="interview_type" value="<?= h($typeKey) ?>">
                         <input type="hidden" name="back_date" value="<?= h($date) ?>">
 
                         <div class="mb-3">
@@ -247,7 +212,6 @@ function countdownLabel(DateTimeZone $tz, string $dt): array {
                           This will update stage to <b>interviewed</b> or <b>no_show</b>.
                         </div>
                       </div>
-
                       <div class="modal-footer">
                         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
                         <button type="submit" class="btn btn-success">Save</button>
@@ -259,135 +223,65 @@ function countdownLabel(DateTimeZone $tz, string $dt): array {
               </td>
             </tr>
           <?php endforeach; ?>
-        <?php endif; ?>
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <?php
+}
+?>
+
+<div class="container my-4">
+
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <div>
+      <h3 class="mb-0">Calendar Day</h3>
+      <div class="text-muted"><b><?= h($dayStart->format('d M Y (D)')) ?></b></div>
+    </div>
+
+    <div class="btn-group" role="group" aria-label="Day navigation">
+      <a class="btn btn-outline-secondary" href="calendar_day.php?date=<?= urlencode($prevDate) ?>">← Prev</a>
+      <a class="btn btn-outline-secondary" href="calendar.php">Back to Calendar</a>
+      <a class="btn btn-outline-secondary" href="calendar_day.php?date=<?= urlencode($nextDate) ?>">Next →</a>
     </div>
   </div>
 
-  <!-- Online -->
-  <div class="card">
-    <div class="card-header d-flex align-items-center justify-content-between">
-      <div class="fw-semibold">Online Interviews</div>
-      <span class="badge text-bg-info text-dark">Total: <?= count($onlineList) ?></span>
+  <?php if (count($inPersonList) === 0 && count($onlineList) === 0): ?>
+    <div class="alert alert-light border d-flex justify-content-between align-items-center">
+      <div class="text-muted">No interviews scheduled for this day.</div>
+      <a class="btn btn-outline-secondary btn-sm" href="calendar.php">Back to Calendar</a>
     </div>
+  <?php else: ?>
+    <?php if (count($inPersonList) > 0) renderInterviewTable($inPersonList, 'Face-to-face Interviews', 'in_person', $tz, $date); ?>
+    <?php if (count($onlineList) > 0) renderInterviewTable($onlineList, 'Online Interviews', 'online', $tz, $date); ?>
+  <?php endif; ?>
 
-    <div class="table-responsive">
-      <table class="table table-striped align-middle mb-0">
-        <thead class="table-light">
-          <tr>
-            <th style="width: 90px;">Time</th>
-            <th style="width: 240px;">Candidate</th>
-            <th>Position</th>
-            <th style="width: 150px;">Stage</th>
-            <th style="width: 160px;">Reminder</th>
-            <th style="width: 220px;">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-        <?php if (!$onlineList): ?>
-          <tr><td colspan="6" class="text-center text-muted py-4">No online interviews.</td></tr>
-        <?php else: ?>
-          <?php foreach ($onlineList as $row): ?>
-            <?php
-              $dt = (string)$row['interview_at'];
-              $label = countdownLabel($tz, $dt);
-              $timeStr = (new DateTime($dt, $tz))->format('H:i');
-            ?>
-            <tr>
-              <td class="fw-semibold"><?= h($timeStr) ?></td>
-              <td>
-                <div class="fw-semibold">
-                  <a href="form_detail.php?form_id=<?= (int)$row['form_id'] ?>"><?= h($row['name'] ?? '-') ?></a>
-                </div>
-                <div class="small text-muted"><?= h($row['phone'] ?? '-') ?></div>
-              </td>
-              <td><?= h($row['position'] ?? '-') ?></td>
-              <td>
-                <span class="badge text-bg-secondary"><?= h($row['interview_stage'] ?? '-') ?></span>
-              </td>
-              <td>
-                <span class="badge <?= h($label[1]) ?>"><?= h($label[0]) ?></span>
-              </td>
+</div>
 
-              <td>
-                <div class="d-flex gap-2 flex-wrap">
-                  <button class="btn btn-sm btn-outline-primary"
-                          data-bs-toggle="modal"
-                          data-bs-target="#editTime-<?= (int)$row['form_id'] ?>-on">
-                    Edit Time
-                  </button>
+<script>
+async function copyDetails(type, date, time, name, phone, position, stage) {
+  const text =
+`Interview Details
+Type: ${type}
+Date: ${date}
+Time: ${time}
+Name: ${name}
+Phone: ${phone}
+Position: ${position}
+Stage: ${stage}`;
+  try {
+    await navigator.clipboard.writeText(text);
+    alert('Copied!');
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+    alert('Copied!');
+  }
+}
+</script>
 
-                  <button class="btn btn-sm btn-outline-success"
-                          data-bs-toggle="modal"
-                          data-bs-target="#completeModal-<?= (int)$row['form_id'] ?>-on">
-                    Complete
-                  </button>
-
-                  <button class="btn btn-sm btn-outline-secondary"
-                          type="button"
-                          onclick="copyDetails('Online', '<?= h($dayStart->format('d M Y')) ?>', '<?= h($timeStr) ?>', '<?= h($row['name'] ?? '-') ?>', '<?= h($row['phone'] ?? '-') ?>', '<?= h($row['position'] ?? '-') ?>', '<?= h($row['interview_stage'] ?? '-') ?>')">
-                    Copy
-                  </button>
-                </div>
-
-                <!-- Edit Time Modal -->
-                <div class="modal fade" id="editTime-<?= (int)$row['form_id'] ?>-on" tabindex="-1" aria-hidden="true">
-                  <div class="modal-dialog">
-                    <form class="modal-content" method="post" action="update_interview.php">
-                      <div class="modal-header">
-                        <h5 class="modal-title">Edit Time (Online)</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                      </div>
-                      <div class="modal-body">
-                        <input type="hidden" name="form_id" value="<?= (int)$row['form_id'] ?>">
-                        <input type="hidden" name="interview_type" value="online">
-                        <input type="hidden" name="back_to" value="calendar_day.php?date=<?= h($date) ?>">
-
-                        <label class="form-label">New Date & Time</label>
-                        <input class="form-control" type="datetime-local" name="interview_at"
-                               value="<?= h((new DateTime($dt, $tz))->format('Y-m-d\TH:i')) ?>" required>
-                      </div>
-                      <div class="modal-footer">
-                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Save</button>
-                      </div>
-                    </form>
-                  </div>
-                </div>
-
-                <!-- Complete Modal -->
-                <div class="modal fade" id="completeModal-<?= (int)$row['form_id'] ?>-on" tabindex="-1" aria-hidden="true">
-                  <div class="modal-dialog">
-                    <form class="modal-content" method="post" action="complete_interview.php">
-                      <div class="modal-header">
-                        <h5 class="modal-title">Complete Interview (Online)</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                      </div>
-
-                      <div class="modal-body">
-                        <input type="hidden" name="form_id" value="<?= (int)$row['form_id'] ?>">
-                        <input type="hidden" name="interview_type" value="online">
-                        <input type="hidden" name="back_date" value="<?= h($date) ?>">
-
-                        <div class="mb-3">
-                          <label class="form-label">Attendance</label>
-                          <div class="d-flex gap-3">
-                            <label class="form-check">
-                              <input class="form-check-input" type="radio" name="attendance" value="attended" required>
-                              <span class="form-check-label">Attended</span>
-                            </label>
-                            <label class="form-check">
-                              <input class="form-check-input" type="radio" name="attendance" value="no_show" required>
-                              <span class="form-check-label">No-show</span>
-                            </label>
-                          </div>
-                        </div>
-
-                        <div class="mb-3">
-                          <label class="form-label">Feedback (optional)</label>
-                          <textarea class="form-control" name="feedback" rows="3" placeholder="Write short feedback..."></textarea>
-                        </div>
-
-                        <div class="small text-muted">
-                          This will update stage to <b>interviewed</b> or <b>no_show</b>.
+<?php require_once __DIR__ . '/footer.php'; ?>

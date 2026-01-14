@@ -1,29 +1,29 @@
 <?php
-// calendar.php (Admin)
-// Simplified UI version:
-// - Remove "Unscheduled (latest 20)" block
-// - Hide "Total 0 / None"
-// - Only show badges + View button when that date has interviews
-
 declare(strict_types=1);
 
-session_start();
+// calendar.php (Admin)
+// UX rules:
+// - Remove big "Unscheduled (latest 20)" table (too complex)
+// - Show only a small top reminder: "Unscheduled count"
+// - Badges (F2F/Online) only when that date has interviews
+// - View button ALWAYS shown (so admin can click any date)
 
+require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/db.php';
 
-// ====== AUTH / ROLE CHECK (adjust if your project uses helper functions) ======
-if (!isset($_SESSION['user_id'])) {
-    header('Location: login.php');
-    exit;
-}
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
+// Admin guard
+if (empty($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
     http_response_code(403);
-    echo "Forbidden";
-    exit;
+    exit('Forbidden');
+}
+
+function h(?string $s): string {
+    return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
 }
 
 // ====== Month handling ======
-$tz = new DateTimeZone('Asia/Kuala_Lumpur'); // adjust if needed
+$tz = new DateTimeZone('Asia/Kuala_Lumpur');
 $today = new DateTime('now', $tz);
 
 $monthParam = isset($_GET['month']) ? trim((string)$_GET['month']) : '';
@@ -54,9 +54,20 @@ $prevMonth = (clone $monthStart)->modify('-1 month')->format('Y-m');
 $nextMonth = (clone $monthStart)->modify('+1 month')->format('Y-m');
 $thisMonth = $today->format('Y-m');
 
+// ====== Unscheduled count (both times NULL) ======
+$unscheduledCount = 0;
+try {
+    $unscheduledCount = (int)$conn->query("
+        SELECT COUNT(*)
+        FROM interview_forms
+        WHERE interview_in_person_at IS NULL
+          AND interview_online_at IS NULL
+    ")->fetchColumn();
+} catch (Throwable $e) {
+    // keep silent for UI; if DB has issues, other parts will show anyway
+}
+
 // ====== Fetch counts per day (in-person & online) ======
-// We count interview_in_person_at and interview_online_at separately.
-// Each interview time counts once for that date.
 $countsByDate = []; // 'YYYY-MM-DD' => ['in' => int, 'on' => int]
 
 $sql = "
@@ -98,7 +109,6 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     ];
 }
 
-// ====== Render ======
 $pageTitle = "Calendar";
 require_once __DIR__ . '/header.php';
 ?>
@@ -107,16 +117,25 @@ require_once __DIR__ . '/header.php';
 
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
     <div>
-      <h2 class="mb-0"><?php echo htmlspecialchars($monthStart->format('F Y')); ?></h2>
+      <h2 class="mb-0"><?= h($monthStart->format('F Y')) ?></h2>
       <div class="text-muted small">Admin Calendar</div>
     </div>
 
     <div class="btn-group" role="group" aria-label="Calendar navigation">
-      <a class="btn btn-outline-secondary" href="calendar.php?month=<?php echo urlencode($prevMonth); ?>">← Prev</a>
-      <a class="btn btn-outline-secondary" href="calendar.php?month=<?php echo urlencode($thisMonth); ?>">Today</a>
-      <a class="btn btn-outline-secondary" href="calendar.php?month=<?php echo urlencode($nextMonth); ?>">Next →</a>
+      <a class="btn btn-outline-secondary" href="calendar.php?month=<?= urlencode($prevMonth) ?>">← Prev</a>
+      <a class="btn btn-outline-secondary" href="calendar.php?month=<?= urlencode($thisMonth) ?>">Today</a>
+      <a class="btn btn-outline-secondary" href="calendar.php?month=<?= urlencode($nextMonth) ?>">Next →</a>
     </div>
   </div>
+
+  <?php if ($unscheduledCount > 0): ?>
+    <div class="alert alert-light border d-flex justify-content-between align-items-center">
+      <div class="text-muted">
+        Unscheduled interviews: <b><?= (int)$unscheduledCount ?></b>
+      </div>
+      <a class="btn btn-outline-secondary btn-sm" href="form.php">Go to All Forms</a>
+    </div>
+  <?php endif; ?>
 
   <div class="table-responsive">
     <table class="table table-bordered align-middle text-center" style="min-width: 900px;">
@@ -134,8 +153,10 @@ require_once __DIR__ . '/header.php';
       <tbody>
         <?php
         $cursor = clone $gridStart;
+
         for ($week = 0; $week < 6; $week++) {
             echo "<tr>";
+
             for ($d = 0; $d < 7; $d++) {
                 $dateKey = $cursor->format('Y-m-d');
                 $isCurrentMonth = ($cursor->format('Y-m') === $monthStart->format('Y-m'));
@@ -146,39 +167,38 @@ require_once __DIR__ . '/header.php';
                 $total = $inCnt + $onCnt;
 
                 $cellClasses = [];
-                $cellClasses[] = $isCurrentMonth ? '' : 'table-light text-muted';
+                if (!$isCurrentMonth) $cellClasses[] = 'table-light text-muted';
                 if ($isToday) $cellClasses[] = 'border border-2 border-primary';
-                $cellClassStr = trim(implode(' ', array_filter($cellClasses)));
+                $cellClassStr = trim(implode(' ', $cellClasses));
 
-                echo '<td class="' . htmlspecialchars($cellClassStr) . '" style="height:130px;">';
+                echo '<td class="' . h($cellClassStr) . '" style="height:130px;">';
 
                 // Date number (always shown)
                 echo '<div class="fw-semibold mb-2" style="font-size:18px;">' . (int)$cursor->format('j') . '</div>';
 
-                // Only show badges + View if there are interviews on that day
+                // Badges only when interviews exist
                 if ($total > 0) {
                     echo '<div class="d-flex justify-content-center gap-2 flex-wrap mb-2">';
                     if ($inCnt > 0) {
-                        echo '<span class="badge bg-primary">F2F ' . $inCnt . '</span>';
+                        echo '<span class="badge bg-primary">F2F ' . (int)$inCnt . '</span>';
                     }
                     if ($onCnt > 0) {
-                        echo '<span class="badge bg-info text-dark">Online ' . $onCnt . '</span>';
+                        echo '<span class="badge bg-info text-dark">Online ' . (int)$onCnt . '</span>';
                     }
                     echo '</div>';
-
-                    echo '<a class="btn btn-sm btn-outline-primary" href="calendar_day.php?date=' . urlencode($dateKey) . '">View</a>';
                 }
+
+                // View ALWAYS available (so user can click any date)
+                echo '<a class="btn btn-sm btn-outline-primary" href="calendar_day.php?date=' . urlencode($dateKey) . '">View</a>';
 
                 echo "</td>";
 
                 $cursor->modify('+1 day');
             }
+
             echo "</tr>";
 
-            // Stop early if next row is completely after month end (optional)
-            if ($cursor > $gridEnd) {
-                break;
-            }
+            if ($cursor > $gridEnd) break;
         }
         ?>
       </tbody>
